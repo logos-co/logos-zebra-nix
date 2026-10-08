@@ -44,7 +44,9 @@ rustPlatform.buildRustPackage {
     runHook preBuild
     CARGO_PROFILE_RELEASE_STRIP=false cargo rustc -p zebrad_c --lib --profile release --offline \
       -j "$NIX_BUILD_CORES" --target ${stdenv.hostPlatform.rust.rustcTargetSpec} \
-      -- -C linker=${exportsLinker} ${lib.optionalString isDarwin "-C link-arg=-Wl,-install_name,$out/lib/libzebrad_c${ext}"}
+      -- -C linker=${exportsLinker} ${if isDarwin
+        then "-C link-arg=-Wl,-install_name,$out/lib/libzebrad_c${ext}"
+        else "-C link-arg=-Wl,-soname,libzebrad_c${ext}"}
     runHook postBuild
   '';
 
