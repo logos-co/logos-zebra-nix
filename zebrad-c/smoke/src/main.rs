@@ -53,19 +53,59 @@ struct Lib {
     free_bytes: unsafe extern "C" fn(*mut u8, usize),
 }
 
-fn dlerror() -> String {
-    let e = unsafe { libc::dlerror() };
-    if e.is_null() {
-        String::new()
-    } else {
-        unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned()
+#[cfg(unix)]
+mod loader {
+    use std::ffi::{c_void, CStr, CString};
+
+    pub fn open(path: &str) -> Result<*mut c_void, String> {
+        let c_path = CString::new(path).map_err(|e| e.to_string())?;
+        let h = unsafe { libc::dlopen(c_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
+        if h.is_null() {
+            let e = unsafe { libc::dlerror() };
+            let why = if e.is_null() {
+                String::new()
+            } else {
+                unsafe { CStr::from_ptr(e) }.to_string_lossy().into_owned()
+            };
+            return Err(format!("dlopen {path}: {why}"));
+        }
+        Ok(h)
+    }
+
+    pub fn symbol(handle: *mut c_void, name: &CStr) -> *mut c_void {
+        unsafe { libc::dlsym(handle, name.as_ptr()) }
+    }
+}
+
+#[cfg(windows)]
+mod loader {
+    use std::ffi::{c_char, c_void, CStr, CString};
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn LoadLibraryA(name: *const c_char) -> *mut c_void;
+        fn GetProcAddress(module: *mut c_void, name: *const c_char) -> *mut c_void;
+        fn GetLastError() -> u32;
+    }
+
+    pub fn open(path: &str) -> Result<*mut c_void, String> {
+        let c_path = CString::new(path).map_err(|e| e.to_string())?;
+        let h = unsafe { LoadLibraryA(c_path.as_ptr()) };
+        if h.is_null() {
+            return Err(format!("LoadLibrary {path}: error {}", unsafe { GetLastError() }));
+        }
+        Ok(h)
+    }
+
+    pub fn symbol(handle: *mut c_void, name: &CStr) -> *mut c_void {
+        unsafe { GetProcAddress(handle, name.as_ptr()) }
     }
 }
 
 /// Looks `name` up in `handle` as a `T`, which must be the function's real pointer type.
 unsafe fn symbol<T>(handle: *mut c_void, name: &str) -> Result<T, String> {
     let c_name = CString::new(name).unwrap();
-    let s = unsafe { libc::dlsym(handle, c_name.as_ptr()) };
+    let s = loader::symbol(handle, &c_name);
     if s.is_null() {
         return Err(format!("{name} is not exported"));
     }
@@ -75,11 +115,7 @@ unsafe fn symbol<T>(handle: *mut c_void, name: &str) -> Result<T, String> {
 
 impl Lib {
     fn load(path: &str) -> Result<Lib, String> {
-        let c_path = CString::new(path).map_err(|e| e.to_string())?;
-        let h = unsafe { libc::dlopen(c_path.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-        if h.is_null() {
-            return Err(format!("dlopen {path}: {}", dlerror()));
-        }
+        let h = loader::open(path)?;
         unsafe {
             Ok(Lib {
                 start: symbol(h, "ZEBRAD_start")?,
