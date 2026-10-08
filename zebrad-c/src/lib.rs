@@ -18,9 +18,11 @@ use std::{
     time::{Duration, Instant},
 };
 
+use prost::Message;
 use serde::Deserialize;
 use tokio::sync::oneshot;
 use tonic::Code;
+use zebra_rpc::lightwalletd::BlockId;
 use zebrad::{
     commands::{start::LightwalletdServiceSink, StartCmd},
     config::ZebradConfig,
@@ -294,6 +296,7 @@ fn node_main(config: ZebradConfig, stop_rx: oneshot::Receiver<()>) {
                 .is_ok()
             {
                 grpc::open(service, handle);
+                let _ = std::thread::Builder::new().name("zebrad-seed".into()).spawn(seed_tip);
             }
         });
         let config = Arc::new(config);
@@ -366,6 +369,21 @@ fn version() -> String {
         zebrad::application::release_version(),
         env!("CARGO_PKG_VERSION")
     )
+}
+
+/// Zebra sets the tip gauge only when it commits a block, so a restarted node would report
+/// no height until its next one. Asks the state once instead.
+fn seed_tip() {
+    const LATEST_BLOCK: &str = "/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetLatestBlock";
+    // An empty ChainSpec, gRPC-framed: uncompressed, zero length.
+    let reply = grpc::call(LATEST_BLOCK, vec![0; 5]);
+    let body = &reply.body;
+    let message = (reply.code == 0 && body.len() >= 5)
+        .then(|| body.get(5..5 + u32::from_be_bytes([body[1], body[2], body[3], body[4]]) as usize))
+        .flatten();
+    if let Some(id) = message.and_then(|m| BlockId::decode(m).ok()) {
+        gauges::TIP.seed(id.height as f64);
+    }
 }
 
 fn status() -> String {

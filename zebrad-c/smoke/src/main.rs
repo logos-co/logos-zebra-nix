@@ -338,6 +338,20 @@ fn block_range(lib: &Lib, start: u64, end: u64) -> Result<(c_int, String, Vec<u6
     Ok((code, message, heights))
 }
 
+fn wait_height(lib: &Lib, want: i64) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let height = lib.status()["height"].as_i64().unwrap_or(-1);
+        if height == want {
+            return Ok(());
+        }
+        if Instant::now() > deadline {
+            return Err(format!("status height {height} after a restart, want {want}"));
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
 fn wait_running(lib: &Lib) -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {
@@ -469,6 +483,9 @@ fn run(lib: &Lib, dir: &Path) -> Result<(), String> {
 
     lib.start(&options(dir, Some((lwd, rpc)), true))?;
     wait_running(lib)?;
+    // The same state again: its tip is known before any new block.
+    wait_height(lib, 0)?;
+    println!("restart: status height 0 before any new block");
     let exposed = &lib.status()["rpcExposed"];
     ensure(
         exposed["lightwalletd"] == format!("127.0.0.1:{lwd}").as_str()
