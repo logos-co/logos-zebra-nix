@@ -27,6 +27,12 @@ impl Slot {
         self.0.store(v.to_bits(), Ordering::Relaxed);
     }
 
+    /// Sets the gauge unless Zebra already has: a block it commits meanwhile wins.
+    pub fn seed(&self, v: f64) {
+        let unset = f64::NAN.to_bits();
+        let _ = self.0.compare_exchange(unset, v.to_bits(), Ordering::Relaxed, Ordering::Relaxed);
+    }
+
     /// The gauge as an integer, or -1 before Zebra first sets it.
     pub fn get(&self) -> i64 {
         let v = self.load();
