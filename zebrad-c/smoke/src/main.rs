@@ -2,6 +2,9 @@
 //! lightwalletd service in memory, then over TCP with `exposeRpc`.
 //!
 //! Usage: zebrad-c-smoke <path to libzebrad_c>
+//!        zebrad-c-smoke <path to libzebrad_c> serve <zebrad.toml>
+//! `serve` runs a node from that config, RPC servers open, until SIGTERM or SIGINT: a regtest
+//! chain for wallet tests, without a zebrad build of its own.
 
 use std::{
     ffi::{c_char, c_int, c_void, CStr, CString},
@@ -9,6 +12,7 @@ use std::{
     net::{SocketAddr, TcpListener, TcpStream},
     path::Path,
     process::ExitCode,
+    sync::atomic::{AtomicBool, Ordering},
     thread,
     time::{Duration, Instant},
 };
@@ -530,12 +534,51 @@ fn run(lib: &Lib, dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
+static STOP: AtomicBool = AtomicBool::new(false);
+
+#[cfg(unix)]
+fn stop_on_signal() {
+    extern "C" fn on(_: c_int) {
+        STOP.store(true, Ordering::SeqCst);
+    }
+    unsafe {
+        libc::signal(libc::SIGTERM, on as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on as libc::sighandler_t);
+    }
+}
+
+// Windows ends the process outright; RocksDB recovers from its write-ahead log.
+#[cfg(windows)]
+fn stop_on_signal() {}
+
+fn serve(lib: &Lib, config: &Path) -> Result<(), String> {
+    let toml = std::fs::read_to_string(config).map_err(|e| format!("{}: {e}", config.display()))?;
+    let options = serde_json::json!({
+        "config": toml,
+        "logFile": config.with_file_name("node.log").display().to_string(),
+        "logFilter": "info",
+        "exposeRpc": true,
+    });
+    stop_on_signal();
+    lib.start(&options.to_string())?;
+    wait_running(lib)?;
+    println!("running: {}", lib.status());
+    while !STOP.load(Ordering::SeqCst) {
+        if lib.state() != RUNNING {
+            return Err(format!("node left running: {}", lib.status()["lastError"]));
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    lib.stop().map(|took| println!("stopped in {took:?}"))
+}
+
 fn main() -> ExitCode {
-    let Some(path) = std::env::args().nth(1) else {
-        eprintln!("usage: zebrad-c-smoke <path to libzebrad_c>");
+    let args: Vec<String> = std::env::args().collect();
+    let Some(path) = args.get(1) else {
+        eprintln!("usage: zebrad-c-smoke <path to libzebrad_c> [serve <zebrad.toml>]");
         return ExitCode::from(2);
     };
-    let lib = match Lib::load(&path) {
+    let lib = match Lib::load(path) {
         Ok(lib) => lib,
         Err(e) => {
             eprintln!("FAIL: {e}");
@@ -543,6 +586,15 @@ fn main() -> ExitCode {
         }
     };
     println!("loaded: {}", lib.version());
+    if let (Some("serve"), Some(config)) = (args.get(2).map(String::as_str), args.get(3)) {
+        return match serve(&lib, Path::new(config)) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("FAIL: {e}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let dir = std::env::temp_dir().join(format!("zebrad-c-smoke-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let result = run(&lib, &dir);

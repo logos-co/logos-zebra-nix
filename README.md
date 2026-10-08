@@ -7,8 +7,11 @@ Zebra, the Zcash node, patched to run in-process and built by Nix as a C library
 packages.<system>.default         # libzebrad_c: lib/libzebrad_c.{dylib,so}, include/zebrad_c.h
 packages.<system>.zebra-src       # Zebra v7.0.0-rc.0 (by tag, fixed hash) + patches/zebra
 packages.<system>.zebrad-c-smoke  # the smoke test binary
+packages.<system>.regtest-zebrad  # bin/zebrad: `zebrad -c <toml> start` on libzebrad_c, for test chains
+packages.<system>.lightwalletd    # lightwalletd v0.5.4, for test chains
 checks.<system>.patches           # the patch guard
 checks.<system>.smoke             # the smoke test, against the built library
+checks.<system>.regtest-fixture   # the two together: three blocks mined, served, a clean stop
 
 packages.x86_64-windows.default         # lib/zebrad_c.dll, lib/libzebrad_c.dll.a, include/zebrad_c.h
 packages.x86_64-windows.zebrad-c-smoke  # bin/zebrad-c-smoke.exe beside zebrad_c.dll and GCC's runtime
@@ -105,6 +108,15 @@ cd zebrad-c && cargo build --release
 ```
 
 A plain cargo build does not apply the export list; the Nix build does.
+
+## A regtest chain for wallet tests
+
+`regtest-zebrad` and `lightwalletd` run a local chain beside the product, never in it.
+`bin/zebrad` takes zebrad's own `-c <zebrad.toml> start` and runs that config on
+libzebrad_c through the smoke binary's `serve` mode, with its RPC servers open
+(`exposeRpc`), until SIGTERM or SIGINT. The node logs to `node.log` beside the config. So
+a test chain needs no zebrad build of its own: the wallet core's `tools/regtest/chain.sh`
+runs on these two as it does on zebrad.
 
 ## Windows
 

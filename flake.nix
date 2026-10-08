@@ -46,6 +46,7 @@
             zebraSrc = zebra.patched;
             crateSrc = source (crateFiles ++ [ ./zebrad-c/smoke/src ]);
           };
+          regtest = import ./nix/regtest-fixture.nix { inherit pkgs libzebrad_c; smoke = smoke.smoke; };
         in
         {
           packages = {
@@ -53,6 +54,9 @@
             inherit libzebrad_c;
             zebra-src = zebra.patched;
             zebrad-c-smoke = smoke.smoke;
+            # A regtest chain for wallet tests: `zebrad -c <toml> start` on libzebrad_c, and lightwalletd.
+            regtest-zebrad = regtest.zebrad;
+            inherit (regtest) lightwalletd;
           };
           checks = {
             patches = pkgs.runCommand "zebra-patch-guard" { nativeBuildInputs = [ pkgs.python3 ]; } ''
@@ -60,6 +64,7 @@
               bash ${./ci/check-patches.sh} ${zebra.upstream} ${./patches/zebra} ${./zebrad-c/Cargo.lock} | tee "$out"
             '';
             smoke = smoke.check;
+            regtest-fixture = regtest.check;
           };
         };
 
