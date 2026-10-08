@@ -1,7 +1,8 @@
 name: CI
 
 # The library, then `nix flake check`: the patch guard, and the smoke test (a regtest node
-# answering lightwalletd gRPC in memory, and over TCP only with exposeRpc).
+# answering lightwalletd gRPC in memory, and over TCP only with exposeRpc). Then Windows: the
+# cross build, and the same smoke test on a Windows runner.
 
 on:
   pull_request:
@@ -39,3 +40,16 @@ jobs:
 
       - name: Patch guard and smoke test
         run: nix flake check -L
+
+  windows:
+    # The cross build on Linux, the PE and import-closure gates and the hand-off live in
+    # logos-co/logos-windows-ci. The smoke test runs under wine, then on windows-latest.
+    uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
+    secrets: inherit
+    with:
+      targets: zebrad-c-smoke
+      # A bare name: LoadLibrary looks beside the executable first.
+      smoke: run zebrad-c-smoke/bin/zebrad-c-smoke.exe zebrad_c.dll
+      timeout-minutes: 120
+      # Measured 307 derivations on a cold cache (2026-10-08): mostly Zebra's vendored crates.
+      cold-derivation-budget: 370

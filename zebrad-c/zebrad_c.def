@@ -1,0 +1,10 @@
+EXPORTS
+    ZEBRAD_start
+    ZEBRAD_stop
+    ZEBRAD_state
+    ZEBRAD_status_json
+    ZEBRAD_last_error
+    ZEBRAD_free
+    ZEBRAD_version
+    ZEBRAD_grpc
+    ZEBRAD_free_bytes

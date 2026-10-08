@@ -9,9 +9,13 @@ packages.<system>.zebra-src       # Zebra v7.0.0-rc.0 (by tag, fixed hash) + pat
 packages.<system>.zebrad-c-smoke  # the smoke test binary
 checks.<system>.patches           # the patch guard
 checks.<system>.smoke             # the smoke test, against the built library
+
+packages.x86_64-windows.default         # lib/zebrad_c.dll, lib/libzebrad_c.dll.a, include/zebrad_c.h
+packages.x86_64-windows.zebrad-c-smoke  # bin/zebrad-c-smoke.exe beside zebrad_c.dll and GCC's runtime
 ```
 
-Systems: `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, `x86_64-linux`. nixpkgs is
+Systems: `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, `x86_64-linux`, and
+`x86_64-windows`, cross-built from `x86_64-linux` (see [Windows](#windows)). nixpkgs is
 logos-nix's (the pin logos-module-builder follows); Rust is 1.91.0, Zebra's own toolchain,
 from rust-overlay.
 
@@ -84,8 +88,8 @@ nix flake check -L            # the patch guard and the smoke test
 nix run .#zebrad-c-smoke -- result/lib/libzebrad_c.dylib
 ```
 
-The smoke test loads the library with `dlopen` and starts a regtest node in a temporary
-directory. In memory, with nothing listening, it calls `GetLatestBlock` (Regtest's genesis),
+The smoke test loads the library with `dlopen` (`LoadLibrary` on Windows) and starts a
+regtest node in a temporary directory. In memory, with nothing listening, it calls `GetLatestBlock` (Regtest's genesis),
 `GetLightdInfo` and `GetBlock`, checks that `GetMempoolStream` is refused, and makes 200
 calls from 8 threads at once. It stops the node and checks that a call now answers
 UNAVAILABLE. Then it checks that TCP servers are refused without `exposeRpc`. With it, it
@@ -102,8 +106,36 @@ cd zebrad-c && cargo build --release
 
 A plain cargo build does not apply the export list; the Nix build does.
 
+## Windows
+
+`packages.x86_64-windows` is built on `x86_64-linux` with logos-nix's MinGW toolchain: GCC with
+the mcf thread model, against the UCRT. `nix/windows.nix` adds three things to the Rust cross
+setup logos-module-builder uses for modules:
+
+- mcfgthread's headers for the C++ (RocksDB, zcash_script), and `-lmcfgthread` at the end of
+  the link: rustc links with `-nodefaultlibs`, so GCC never adds it.
+- libgcc linked shared, as g++ links it. rustc links `libgcc_eh` statically, which gives the
+  DLL its own emulated thread-local storage while `libstdc++-6.dll` uses `libgcc_s`'s.
+  RocksDB's `std::call_once` then stores its callable through one and calls through the other:
+  an access violation in `Options::default()`, as reported in rust-rocksdb#665. The build
+  checks that `__emutls_get_address` comes from `libgcc_s_seh-1.dll`.
+- `zebrad_c.def`, the export list, as `zebrad_c.map` and `zebrad_c.exp` are elsewhere.
+
+`zebrad_c.dll` imports GCC's runtime (`libstdc++-6.dll`, `libgcc_s_seh-1.dll`,
+`libmcfgthread-2.dll`), which Logos hosts ship. The smoke package carries copies, so its
+`bin/` runs as it is:
+
+```sh
+nix build .#packages.x86_64-windows.zebrad-c-smoke   # on x86_64-linux
+zebrad-c-smoke.exe zebrad_c.dll                      # on Windows, in that bin/
+```
+
 ## Verified
 
 `nix build` and both checks on `aarch64-darwin` (an M1 Max) and `x86_64-linux`: nine exports
 each, the smoke test passing, and each stop under 10 ms on regtest. `x86_64-darwin` and
 `aarch64-linux` evaluate, but were not built.
+
+`x86_64-windows`, built on `x86_64-linux`: nine exports, and on Windows 11 the smoke test
+passing in 8.6 s with each stop under 5 ms. `zebrad_module` on the same machine ran the
+wallet's regtest flow on it over Logos IPC: sync, shielding, a send, a stop and restart.

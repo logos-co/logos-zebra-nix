@@ -10,10 +10,23 @@
     rust-overlay.inputs.nixpkgs.follows = "nixpkgs";
   };
 
-  outputs = { self, nixpkgs, rust-overlay, ... }:
+  outputs = { self, nixpkgs, rust-overlay, logos-nix, ... }:
     let
       lib = nixpkgs.lib;
       systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
+
+      # The library's build leaves the smoke test's sources out, so editing it rebuilds
+      # only the smoke binary.
+      crateFiles = [
+        ./zebrad-c/Cargo.toml
+        ./zebrad-c/Cargo.lock
+        ./zebrad-c/src
+        ./zebrad-c/include
+        ./zebrad-c/zebrad_c.exp
+        ./zebrad-c/zebrad_c.map
+        ./zebrad-c/smoke/Cargo.toml
+      ];
+      source = files: lib.fileset.toSource { root = ./zebrad-c; fileset = lib.fileset.unions files; };
 
       perSystem = system:
         let
@@ -22,19 +35,6 @@
           toolchain = pkgs.rust-bin.stable."1.91.0".minimal;
           rustPlatform = pkgs.makeRustPlatform { cargo = toolchain; rustc = toolchain; };
           zebra = import ./nix/zebra-src.nix { inherit pkgs; };
-
-          # The library's build leaves the smoke test's sources out, so editing it rebuilds
-          # only the smoke binary.
-          crateFiles = [
-            ./zebrad-c/Cargo.toml
-            ./zebrad-c/Cargo.lock
-            ./zebrad-c/src
-            ./zebrad-c/include
-            ./zebrad-c/zebrad_c.exp
-            ./zebrad-c/zebrad_c.map
-            ./zebrad-c/smoke/Cargo.toml
-          ];
-          source = files: lib.fileset.toSource { root = ./zebrad-c; fileset = lib.fileset.unions files; };
 
           libzebrad_c = import ./nix/zebrad-c.nix {
             inherit pkgs rustPlatform;
@@ -64,9 +64,31 @@
         };
 
       all = lib.genAttrs systems perSystem;
+
+      # x86_64-windows: cross builds from x86_64-linux, keyed as the family's pseudo-system.
+      windows =
+        let
+          pkgs = import nixpkgs { system = "x86_64-linux"; overlays = [ (import rust-overlay) ]; };
+          zebra = import ./nix/zebra-src.nix { inherit pkgs; };
+        in
+        import ./nix/windows.nix {
+          inherit pkgs;
+          wpkgs = logos-nix.lib.mkWindowsPkgs { buildSystem = "x86_64-linux"; };
+          toolchain = pkgs.rust-bin.stable."1.91.0".minimal.override { targets = [ "x86_64-pc-windows-gnu" ]; };
+          zebraSrc = zebra.patched;
+          crateSrc = source (crateFiles ++ [ ./zebrad-c/zebrad_c.def ]);
+          smokeSrc = source (crateFiles ++ [ ./zebrad-c/zebrad_c.def ./zebrad-c/smoke/src ]);
+        };
     in
     {
-      packages = lib.mapAttrs (_: s: s.packages) all;
+      packages = lib.mapAttrs (_: s: s.packages) all // {
+        x86_64-windows = {
+          default = windows.libzebrad_c;
+          inherit (windows) libzebrad_c;
+          # zebrad-c-smoke.exe beside zebrad_c.dll and GCC's runtime DLLs, ready to run.
+          zebrad-c-smoke = windows.smoke;
+        };
+      };
       checks = lib.mapAttrs (_: s: s.checks) all;
     };
 }
