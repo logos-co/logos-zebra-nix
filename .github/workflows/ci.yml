@@ -51,3 +51,5 @@ jobs:
       # A bare name: LoadLibrary looks beside the executable first.
       smoke: run zebrad-c-smoke/bin/zebrad-c-smoke.exe zebrad_c.dll
       timeout-minutes: 120
+      # Measured 307 derivations on a cold cache (2026-10-08): mostly Zebra's vendored crates.
+      cold-derivation-budget: 370
