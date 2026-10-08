@@ -1,0 +1,56 @@
+From 8df30e39480b9e99ac6cb6f9979e75e0c2b3970e Mon Sep 17 00:00:00 2001
+From: Dario Gabriel Lipicar <dario@status.im>
+Date: Wed, 7 Oct 2026 17:59:05 -0300
+Subject: [PATCH 3/4] consensus: create the global batch verifiers on demand
+
+init_batch_verifiers() forces the seven batch-verifier statics, so an embedder can
+create them on a runtime that outlives each node and restart the node in-process.
+No verification logic changes.
+---
+ zebra-consensus/src/lib.rs        |  3 ++-
+ zebra-consensus/src/primitives.rs | 15 +++++++++++++++
+ 2 files changed, 17 insertions(+), 1 deletion(-)
+
+diff --git a/zebra-consensus/src/lib.rs b/zebra-consensus/src/lib.rs
+index 1d1efd8..3658631 100644
+--- a/zebra-consensus/src/lib.rs
++++ b/zebra-consensus/src/lib.rs
+@@ -57,7 +57,8 @@ pub use checkpoint::{VerifyCheckpointError, MAX_CHECKPOINT_BYTE_COUNT, MAX_CHECK
+ pub use config::Config;
+ pub use error::BlockError;
+ pub use primitives::{
+-    ed25519, groth16, halo2, redjubjub, redpallas, sapling::prover as sapling_prover,
++    ed25519, groth16, halo2, init_batch_verifiers, redjubjub, redpallas,
++    sapling::prover as sapling_prover,
+ };
+ pub use router::RouterError;
+ 
+diff --git a/zebra-consensus/src/primitives.rs b/zebra-consensus/src/primitives.rs
+index 7e48ea8..ec3f221 100644
+--- a/zebra-consensus/src/primitives.rs
++++ b/zebra-consensus/src/primitives.rs
+@@ -12,6 +12,21 @@ pub mod redjubjub;
+ pub mod redpallas;
+ pub mod sapling;
+ 
++/// Creates the global batch verifiers on the current tokio runtime.
++///
++/// An embedder that starts the node more than once per process calls this once,
++/// inside a runtime that outlives every node, so the verifiers' worker tasks are
++/// not cancelled when a node's own runtime shuts down.
++pub fn init_batch_verifiers() {
++    once_cell::sync::Lazy::force(&ed25519::VERIFIER);
++    once_cell::sync::Lazy::force(&redjubjub::VERIFIER);
++    once_cell::sync::Lazy::force(&redpallas::VERIFIER);
++    once_cell::sync::Lazy::force(&sapling::VERIFIER);
++    once_cell::sync::Lazy::force(&halo2::VERIFIER_PRE_NU6_2);
++    once_cell::sync::Lazy::force(&halo2::VERIFIER_NU6_2);
++    once_cell::sync::Lazy::force(&halo2::VERIFIER_NU6_3_ONWARD);
++}
++
+ /// The maximum batch size for any of the batch verifiers.
+ const MAX_BATCH_SIZE: usize = 64;
+ 
+-- 
+2.50.1 (Apple Git-155)
+

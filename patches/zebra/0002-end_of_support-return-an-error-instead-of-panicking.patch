@@ -1,0 +1,68 @@
+From d1ee89d3b42e5144d27872ab8b6bf49c46d58094 Mon Sep 17 00:00:00 2001
+From: Dario Gabriel Lipicar <dario@status.im>
+Date: Wed, 7 Oct 2026 17:58:49 -0300
+Subject: [PATCH 2/4] end_of_support: return an error instead of panicking
+
+The node stops through start()'s normal error path, so a process hosting it
+survives the end-of-support halt whatever its panic strategy.
+---
+ zebrad/src/components/sync/end_of_support.rs | 14 ++++++++------
+ 1 file changed, 8 insertions(+), 6 deletions(-)
+
+diff --git a/zebrad/src/components/sync/end_of_support.rs b/zebrad/src/components/sync/end_of_support.rs
+index a76ede3..39dc508 100644
+--- a/zebrad/src/components/sync/end_of_support.rs
++++ b/zebrad/src/components/sync/end_of_support.rs
+@@ -3,7 +3,7 @@
+ use std::time::Duration;
+ 
+ use chrono::{DateTime, Utc};
+-use color_eyre::Report;
++use color_eyre::{eyre::eyre, Report};
+ 
+ use zebra_chain::{
+     block::Height,
+@@ -53,7 +53,7 @@ pub async fn start(
+     loop {
+         if network == Network::Mainnet {
+             if let Some(tip_height) = latest_chain_tip.best_tip_height() {
+-                check(tip_height, &network);
++                check(tip_height, &network)?;
+             }
+         } else {
+             info!("Release always valid in Testnet");
+@@ -81,20 +81,20 @@ pub fn estimated_height_after_release(network: &Network, days: u32) -> Height {
+         .estimate_height_at(release_time + chrono::Duration::days(days.into()))
+ }
+ 
+-/// Check if the current release is too old and panic if so.
+-pub fn check(tip_height: Height, network: &Network) {
++/// Check if the current release is too old and return an error if so.
++pub fn check(tip_height: Height, network: &Network) -> Result<(), Report> {
+     info!("Checking if Zebra release is inside support range ...");
+ 
+     let panic_height = estimated_height_after_release(network, EOS_PANIC_AFTER);
+     let warn_height = estimated_height_after_release(network, EOS_WARN_AFTER);
+ 
+     if tip_height > panic_height {
+-        panic!(
++        return Err(eyre!(
+             "{EOS_PANIC_MESSAGE_HEADER} if the release date is older than {EOS_PANIC_AFTER} days. \
+             \nRelease name: {}, Estimated release height: {ESTIMATED_RELEASE_HEIGHT} \
+             \nHint: Download and install the latest Zebra release from: https://github.com/ZcashFoundation/zebra/releases/latest",
+             release_version()
+-        );
++        ));
+     } else if tip_height > warn_height {
+         warn!(
+             "{EOS_WARN_MESSAGE_HEADER} at block {}. \
+@@ -104,4 +104,6 @@ pub fn check(tip_height: Height, network: &Network) {
+     } else {
+         info!("Zebra release is supported until block {}, please report bugs at https://github.com/ZcashFoundation/zebra/issues", panic_height.0);
+     }
++
++    Ok(())
+ }
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,200 @@
+From 191ac24fb96cb56df5c52fe5c897844bcbae3115 Mon Sep 17 00:00:00 2001
+From: Dario Gabriel Lipicar <dario@status.im>
+Date: Thu, 8 Oct 2026 00:20:39 -0300
+Subject: [PATCH 4/4] lightwalletd: hand the gRPC service to an embedder
+ in-process
+
+The lightwalletd server's documentation says not to run it on end users'
+machines: a loopback port is reachable by any local process, and by web
+pages loaded in a browser there. An application that embeds the node, and
+already has a transport of its own between its processes, needs the
+service rather than the port.
+
+server::service() builds the CompactTxStreamer service that init() serves
+over TCP. run_node() takes an optional sink that receives the same service,
+type-erased and behind the same request tracing, whether or not
+lightwalletd_listen_addr is set. StartCmd::start passes None, so zebrad
+itself behaves as before.
+---
+ zebra-rpc/src/lightwalletd/server.rs | 45 ++++++++++++++++++++++++----
+ zebrad/src/commands/start.rs         | 42 +++++++++++++++++++++++---
+ 2 files changed, 77 insertions(+), 10 deletions(-)
+
+diff --git a/zebra-rpc/src/lightwalletd/server.rs b/zebra-rpc/src/lightwalletd/server.rs
+index ea038f6..6ef08b9 100644
+--- a/zebra-rpc/src/lightwalletd/server.rs
++++ b/zebra-rpc/src/lightwalletd/server.rs
+@@ -1,10 +1,14 @@
+ //! A tonic gRPC server for the lightwalletd `CompactTxStreamer` client API.
+ 
+-use std::{net::SocketAddr, time::Duration};
++use std::{convert::Infallible, net::SocketAddr, time::Duration};
+ 
+ use tokio::task::JoinHandle;
+-use tonic::transport::{server::TcpIncoming, Server};
+-use tower::BoxError;
++use tonic::{
++    body::Body,
++    codegen::http,
++    transport::{server::TcpIncoming, Server},
++};
++use tower::{util::BoxCloneService, BoxError};
+ use zebra_chain::{chain_tip::ChainTip, parameters::Network};
+ use zebra_node_services::mempool::{MempoolService, MempoolTxSubscriber};
+ use zebra_state::ReadState;
+@@ -31,6 +35,10 @@ const HTTP2_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
+ 
+ type ServerTask = JoinHandle<Result<(), BoxError>>;
+ 
++/// The lightwalletd gRPC service with its types erased, for an embedder that serves it
++/// in-process rather than over TCP.
++pub type BoxedService = BoxCloneService<http::Request<Body>, http::Response<Body>, Infallible>;
++
+ /// Lightwalletd gRPC service.
+ ///
+ /// Most methods are implemented by calling Zebra's JSON-RPC methods in-process, in the
+@@ -51,6 +59,31 @@ where
+     pub(super) network: Network,
+ }
+ 
++/// Builds the lightwalletd gRPC service, for [`init`] or for an embedder to serve itself.
++pub fn service<Rpc, ReadStateService, Mempool, Tip>(
++    rpc: Rpc,
++    read_state: ReadStateService,
++    mempool: Mempool,
++    latest_chain_tip: Tip,
++    mempool_change: MempoolTxSubscriber,
++    network: Network,
++) -> CompactTxStreamerServer<LightwalletdRPC<Rpc, ReadStateService, Mempool, Tip>>
++where
++    Rpc: RpcMethods + Clone,
++    ReadStateService: ReadState,
++    Mempool: MempoolService,
++    Tip: ChainTip + Clone + Send + Sync + 'static,
++{
++    CompactTxStreamerServer::new(LightwalletdRPC {
++        rpc,
++        read_state,
++        mempool,
++        latest_chain_tip,
++        mempool_change,
++        network,
++    })
++}
++
+ /// Initializes the lightwalletd gRPC server.
+ #[tracing::instrument(skip_all)]
+ pub async fn init<Rpc, ReadStateService, Mempool, Tip>(
+@@ -68,14 +101,14 @@ where
+     Mempool: MempoolService,
+     Tip: ChainTip + Clone + Send + Sync + 'static,
+ {
+-    let lightwalletd_service = LightwalletdRPC {
++    let lightwalletd_service = service(
+         rpc,
+         read_state,
+         mempool,
+         latest_chain_tip,
+         mempool_change,
+         network,
+-    };
++    );
+ 
+     let reflection_service = tonic_reflection::server::Builder::configure()
+         .register_encoded_file_descriptor_set(crate::lightwalletd::FILE_DESCRIPTOR_SET)
+@@ -98,7 +131,7 @@ where
+             .http2_keepalive_timeout(Some(HTTP2_KEEPALIVE_TIMEOUT))
+             .layer(GrpcTracingLayer)
+             .add_service(reflection_service)
+-            .add_service(CompactTxStreamerServer::new(lightwalletd_service))
++            .add_service(lightwalletd_service)
+             .serve_with_incoming(TcpIncoming::from(tcp_listener))
+             .await?;
+ 
+diff --git a/zebrad/src/commands/start.rs b/zebrad/src/commands/start.rs
+index 23d363a..07b976f 100644
+--- a/zebrad/src/commands/start.rs
++++ b/zebrad/src/commands/start.rs
+@@ -89,12 +89,21 @@ use tokio::{
+     pin, select,
+     sync::{oneshot, watch},
+ };
+-use tower::{builder::ServiceBuilder, util::BoxService, ServiceExt};
++use tower::{
++    builder::ServiceBuilder,
++    util::{BoxCloneService, BoxService},
++    Layer, ServiceExt,
++};
+ use tracing_futures::Instrument;
+ 
+ use zebra_chain::block::genesis::regtest_genesis_block;
+ use zebra_consensus::router::BackgroundTaskHandles;
+-use zebra_rpc::{methods::RpcImpl, server::RpcServer, SubmitBlockChannel};
++use zebra_rpc::{
++    lightwalletd::{self, tracing::GrpcTracingLayer},
++    methods::RpcImpl,
++    server::RpcServer,
++    SubmitBlockChannel,
++};
+ 
+ use crate::{
+     application::{build_version, user_agent, LAST_WARN_ERROR_LOG_SENDER},
+@@ -130,6 +139,10 @@ pub struct StartCmd {
+     unsafe_low_specs: bool,
+ }
+ 
++/// Receives the lightwalletd gRPC service once the node has built it, so an embedder
++/// can serve it in-process, without a TCP listener.
++pub type LightwalletdServiceSink = Box<dyn FnOnce(lightwalletd::server::BoxedService) + Send>;
++
+ /// Warns if Linux TCP slow-start-after-idle is enabled, which significantly
+ /// reduces single-peer throughput for block propagation.
+ ///
+@@ -260,14 +273,21 @@ impl StartCmd {
+     }
+ 
+     async fn start(&self) -> Result<(), Report> {
+-        Self::run_node(APPLICATION.config(), self.unsafe_low_specs).await
++        Self::run_node(APPLICATION.config(), self.unsafe_low_specs, None).await
+     }
+ 
+     /// Runs the node with `config`, without the Abscissa launcher.
+     ///
+     /// Dropping the returned future stops the node. The caller owns tracing, metrics,
+     /// the rayon pool, signal handling and the shutdown flag.
+-    pub async fn run_node(config: Arc<ZebradConfig>, unsafe_low_specs: bool) -> Result<(), Report> {
++    ///
++    /// If `lightwalletd_sink` is set, it receives the lightwalletd gRPC service, whether or
++    /// not `rpc.lightwalletd_listen_addr` also serves it over TCP.
++    pub async fn run_node(
++        config: Arc<ZebradConfig>,
++        unsafe_low_specs: bool,
++        lightwalletd_sink: Option<LightwalletdServiceSink>,
++    ) -> Result<(), Report> {
+         check_tcp_slow_start_after_idle();
+ 
+         let is_regtest = config.network.network.is_regtest();
+@@ -601,6 +621,20 @@ impl StartCmd {
+             }
+         };
+ 
++        if let Some(lightwalletd_sink) = lightwalletd_sink {
++            info!("providing the lightwalletd gRPC service to the embedder");
++            lightwalletd_sink(BoxCloneService::new(GrpcTracingLayer.layer(
++                lightwalletd::server::service(
++                    rpc_impl.clone(),
++                    read_only_state_service.clone(),
++                    mempool.clone(),
++                    latest_chain_tip.clone(),
++                    mempool_transaction_subscriber.clone(),
++                    config.network.network.clone(),
++                ),
++            )));
++        }
++
+         // Start concurrent tasks which don't add load to other tasks
+         info!("spawning block gossip task");
+         let block_gossip_task_handle = tokio::spawn(
+-- 
+2.50.1 (Apple Git-155)
+

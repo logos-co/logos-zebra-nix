@@ -1,0 +1,5 @@
+result
+result-*
+target/
+# `nix build .#zebra-src -o zebra` gives zebrad-c the patched tree for cargo
+/zebra

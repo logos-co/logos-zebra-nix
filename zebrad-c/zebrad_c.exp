@@ -1,0 +1,9 @@
+_ZEBRAD_start
+_ZEBRAD_stop
+_ZEBRAD_state
+_ZEBRAD_status_json
+_ZEBRAD_last_error
+_ZEBRAD_free
+_ZEBRAD_version
+_ZEBRAD_grpc
+_ZEBRAD_free_bytes

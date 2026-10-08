@@ -1,0 +1,19 @@
+[package]
+name = "zebrad-c-smoke"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Loads libzebrad_c, runs a regtest node and talks gRPC to it, in memory and over TCP"
+
+# Explicit, so the library's build can leave this crate's sources out.
+[[bin]]
+name = "zebrad-c-smoke"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+prost = "0.14"
+serde_json = "1"
+tokio = { version = "1.44", features = ["rt", "net", "time"] }
+tonic = "0.14"
+tonic-prost = "0.14"

@@ -1,0 +1,63 @@
+From 7c7d206649ddafc17d13c1dcebaeaedf0ec55381 Mon Sep 17 00:00:00 2001
+From: Dario Gabriel Lipicar <dario@status.im>
+Date: Wed, 7 Oct 2026 17:58:38 -0300
+Subject: [PATCH 1/4] start: run the node with a caller-supplied config
+
+StartCmd::start becomes a call to a new public run_node(config, unsafe_low_specs),
+so an embedder can run the node without booting the Abscissa launcher.
+---
+ zebrad/src/commands/start.rs | 15 ++++++++++-----
+ 1 file changed, 10 insertions(+), 5 deletions(-)
+
+diff --git a/zebrad/src/commands/start.rs b/zebrad/src/commands/start.rs
+index 962e929..23d363a 100644
+--- a/zebrad/src/commands/start.rs
++++ b/zebrad/src/commands/start.rs
+@@ -260,9 +260,16 @@ impl StartCmd {
+     }
+ 
+     async fn start(&self) -> Result<(), Report> {
++        Self::run_node(APPLICATION.config(), self.unsafe_low_specs).await
++    }
++
++    /// Runs the node with `config`, without the Abscissa launcher.
++    ///
++    /// Dropping the returned future stops the node. The caller owns tracing, metrics,
++    /// the rayon pool, signal handling and the shutdown flag.
++    pub async fn run_node(config: Arc<ZebradConfig>, unsafe_low_specs: bool) -> Result<(), Report> {
+         check_tcp_slow_start_after_idle();
+ 
+-        let config = APPLICATION.config();
+         let is_regtest = config.network.network.is_regtest();
+ 
+         let config = if is_regtest {
+@@ -311,7 +318,6 @@ impl StartCmd {
+             // Preflight does blocking filesystem and /proc reads, and can hash
+             // the cached zcashd binary, so keep it off the async runtime.
+             let preflight_config = config.clone();
+-            let unsafe_low_specs = self.unsafe_low_specs;
+             tokio::task::spawn_blocking(move || {
+                 zcashd_compat::run_preflight(&preflight_config, unsafe_low_specs)
+             })
+@@ -360,7 +366,7 @@ impl StartCmd {
+         read_only_state_service.log_db_metrics();
+ 
+         let state = ServiceBuilder::new()
+-            .buffer(Self::state_buffer_bound())
++            .buffer(Self::state_buffer_bound(&config))
+             .service(state_service);
+ 
+         info!("initializing network");
+@@ -946,8 +952,7 @@ impl StartCmd {
+ 
+     /// Returns the bound for the state service buffer,
+     /// based on the configurations of the services that use the state concurrently.
+-    fn state_buffer_bound() -> usize {
+-        let config = APPLICATION.config();
++    fn state_buffer_bound(config: &ZebradConfig) -> usize {
+ 
+         // Ignore the checkpoint verify limit, because it is very large.
+         //
+-- 
+2.50.1 (Apple Git-155)
+
