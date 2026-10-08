@@ -64,16 +64,17 @@ is exported (`ci/check-exports.sh`).
 ## Security: no port by default
 
 The wallet reaches the node over Logos IPC: the zebrad module passes the gRPC bytes to
-`ZEBRAD_grpc` and returns the response. Nothing listens, so only the module's own process
-can query the node or submit transactions through it.
+`ZEBRAD_grpc` and returns the response. No RPC port is open, so only the module's own
+process can query the node or submit transactions through it.
 
 Zebra's TCP servers (`rpc.listen_addr`, `rpc.lightwalletd_listen_addr`,
 `rpc.indexer_listen_addr`, `health.listen_addr`) are refused unless the options set
-`"exposeRpc": true`, and each start that opens them logs a warning. They serve plaintext,
-and the lightwalletd one has no authentication: any local process, and any web page in a
-browser on the machine, can reach a loopback port. Use `exposeRpc` for test harnesses, such
-as JSON-RPC `generate` on regtest, or for a node someone operates deliberately. The P2P
-listener (`network.listen_addr`) is the node's job and is not affected.
+`"exposeRpc": true`; each start that opens them logs a warning, and `rpcExposed` in the
+status lists them. They serve plaintext, and only JSON-RPC authenticates (with its cookie):
+any local process, and any web page in a browser on the machine, can reach a loopback port.
+Use `exposeRpc` for test harnesses, such as JSON-RPC `generate` on regtest, or for a node
+someone operates deliberately. The P2P listener (`network.listen_addr`) is the node's job
+and is not affected.
 
 ## Build and test
 
@@ -100,3 +101,9 @@ cd zebrad-c && cargo build --release
 ```
 
 A plain cargo build does not apply the export list; the Nix build does.
+
+## Verified
+
+`nix build` and both checks on `aarch64-darwin` (an M1 Max) and `x86_64-linux`: nine exports
+each, the smoke test passing, and each stop under 10 ms on regtest. `x86_64-darwin` and
+`aarch64-linux` evaluate, but were not built.
