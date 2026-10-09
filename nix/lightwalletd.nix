@@ -23,9 +23,10 @@ pkgs.buildGo125Module ({
   meta.mainProgram = "lightwalletd";
 } // pkgs.lib.optionalAttrs (goos == "windows") {
   # buildGoModule pins GOOS to the build platform's, so the .exe is built here directly.
+  # `-s -w`: with DWARF in it, the mingw objdump the Windows CI gates with finds no import table.
   buildPhase = ''
     runHook preBuild
-    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "${stamp}" -o "$GOPATH/bin/lightwalletd.exe" .
+    GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w ${stamp}" -o "$GOPATH/bin/lightwalletd.exe" .
     runHook postBuild
   '';
   postInstall = ''

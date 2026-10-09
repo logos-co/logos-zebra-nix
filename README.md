@@ -15,6 +15,8 @@ checks.<system>.regtest-fixture   # the two together: three blocks mined, served
 
 packages.x86_64-windows.default         # lib/zebrad_c.dll, lib/libzebrad_c.dll.a, include/zebrad_c.h
 packages.x86_64-windows.zebrad-c-smoke  # bin/zebrad-c-smoke.exe beside zebrad_c.dll and GCC's runtime
+packages.x86_64-windows.regtest-zebrad  # that bin/ plus bin/zebrad, the same wrapper for Git Bash
+packages.x86_64-windows.lightwalletd    # bin/lightwalletd.exe
 ```
 
 Systems: `aarch64-darwin`, `x86_64-darwin`, `aarch64-linux`, `x86_64-linux`, and
@@ -117,6 +119,10 @@ libzebrad_c through the smoke binary's `serve` mode, with its RPC servers open
 (`exposeRpc`), until SIGTERM or SIGINT. The node logs to `node.log` beside the config. So
 a test chain needs no zebrad build of its own: the wallet core's `tools/regtest/chain.sh`
 runs on these two as it does on zebrad.
+
+On Windows the wrapper is a Git Bash script around `zebrad-c-smoke.exe`. Serve has no signal
+handling there, so `chain.sh` stops it with `taskkill`. `lightwalletd.exe` is pure Go, built
+with `GOOS=windows` and no cgo.
 
 ## Windows
 

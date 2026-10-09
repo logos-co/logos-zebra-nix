@@ -47,9 +47,12 @@ jobs:
     uses: logos-co/logos-windows-ci/.github/workflows/windows-ci.yml@v1
     secrets: inherit
     with:
-      targets: zebrad-c-smoke
+      # regtest-zebrad and lightwalletd are the regtest chain the wallet app's Windows doctest runs.
+      targets: zebrad-c-smoke regtest-zebrad lightwalletd
       # A bare name: LoadLibrary looks beside the executable first.
-      smoke: run zebrad-c-smoke/bin/zebrad-c-smoke.exe zebrad_c.dll
+      smoke: |
+        run zebrad-c-smoke/bin/zebrad-c-smoke.exe zebrad_c.dll
+        run lightwalletd/bin/lightwalletd.exe version
       timeout-minutes: 120
       # Measured 307 derivations on a cold cache (2026-10-08): mostly Zebra's vendored crates.
       cold-derivation-budget: 370
