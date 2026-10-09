@@ -71,9 +71,10 @@
       all = lib.genAttrs systems perSystem;
 
       # x86_64-windows: cross builds from x86_64-linux, keyed as the family's pseudo-system.
+      windowsPkgs = import nixpkgs { system = "x86_64-linux"; overlays = [ (import rust-overlay) ]; };
       windows =
         let
-          pkgs = import nixpkgs { system = "x86_64-linux"; overlays = [ (import rust-overlay) ]; };
+          pkgs = windowsPkgs;
           zebra = import ./nix/zebra-src.nix { inherit pkgs; };
         in
         import ./nix/windows.nix {
@@ -84,6 +85,7 @@
           crateSrc = source (crateFiles ++ [ ./zebrad-c/zebrad_c.def ]);
           smokeSrc = source (crateFiles ++ [ ./zebrad-c/zebrad_c.def ./zebrad-c/smoke/src ]);
         };
+      regtestWindows = import ./nix/regtest-windows.nix { pkgs = windowsPkgs; smoke = windows.smoke; };
     in
     {
       packages = lib.mapAttrs (_: s: s.packages) all // {
@@ -92,6 +94,9 @@
           inherit (windows) libzebrad_c;
           # zebrad-c-smoke.exe beside zebrad_c.dll and GCC's runtime DLLs, ready to run.
           zebrad-c-smoke = windows.smoke;
+          # The regtest chain for the wallet app's Windows doctest, run under Git Bash.
+          regtest-zebrad = regtestWindows.zebrad;
+          inherit (regtestWindows) lightwalletd;
         };
       };
       checks = lib.mapAttrs (_: s: s.checks) all;
