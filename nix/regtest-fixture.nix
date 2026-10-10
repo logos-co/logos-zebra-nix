@@ -14,23 +14,7 @@ let
     exec ${smoke}/bin/zebrad-c-smoke ${lib} serve "$2"
   '';
 
-  # v0.5.x speaks lightwallet-protocol v0.5.0, the oldest the wallet accepts.
-  lightwalletd = pkgs.buildGo125Module {
-    pname = "lightwalletd";
-    version = "0.5.4";
-    src = pkgs.fetchFromGitHub {
-      owner = "zcash";
-      repo = "lightwalletd";
-      rev = "v0.5.4";
-      hash = "sha256-vlfC/2yuHx9wiOczyUfBmuI5KdLyonACVlwtUowSuDA=";
-    };
-    vendorHash = "sha256-DT1R6C6AoXR0FpyVTzw9VcF0DaPbvqvkrVsYg+6bP2g=";
-    subPackages = [ "." ];
-    # As upstream's Makefile stamps a release; GetLightdInfo reports it.
-    ldflags = [ "-X github.com/zcash/lightwalletd/common.Version=v0.5.4" ];
-    doCheck = false;
-    meta.mainProgram = "lightwalletd";
-  };
+  lightwalletd = import ./lightwalletd.nix { inherit pkgs; };
 in
 {
   inherit zebrad lightwalletd;
