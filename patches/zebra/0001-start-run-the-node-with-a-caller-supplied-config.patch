@@ -1,4 +1,4 @@
-From 7c7d206649ddafc17d13c1dcebaeaedf0ec55381 Mon Sep 17 00:00:00 2001
+From 789aeca2f8bfcf8c3212d8091f20bcee6816e45a Mon Sep 17 00:00:00 2001
 From: Dario Gabriel Lipicar <dario@status.im>
 Date: Wed, 7 Oct 2026 17:58:38 -0300
 Subject: [PATCH 1/4] start: run the node with a caller-supplied config
@@ -10,7 +10,7 @@ so an embedder can run the node without booting the Abscissa launcher.
  1 file changed, 10 insertions(+), 5 deletions(-)
 
 diff --git a/zebrad/src/commands/start.rs b/zebrad/src/commands/start.rs
-index 962e929..23d363a 100644
+index 61a7e88ab..f563c8409 100644
 --- a/zebrad/src/commands/start.rs
 +++ b/zebrad/src/commands/start.rs
 @@ -260,9 +260,16 @@ impl StartCmd {
@@ -59,5 +59,5 @@ index 962e929..23d363a 100644
          // Ignore the checkpoint verify limit, because it is very large.
          //
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

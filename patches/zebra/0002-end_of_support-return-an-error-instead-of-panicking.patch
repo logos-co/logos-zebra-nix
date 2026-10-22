@@ -1,4 +1,4 @@
-From d1ee89d3b42e5144d27872ab8b6bf49c46d58094 Mon Sep 17 00:00:00 2001
+From 6a1c6cb2019afa11358ba0607d073c5a769f5999 Mon Sep 17 00:00:00 2001
 From: Dario Gabriel Lipicar <dario@status.im>
 Date: Wed, 7 Oct 2026 17:58:49 -0300
 Subject: [PATCH 2/4] end_of_support: return an error instead of panicking
@@ -10,7 +10,7 @@ survives the end-of-support halt whatever its panic strategy.
  1 file changed, 8 insertions(+), 6 deletions(-)
 
 diff --git a/zebrad/src/components/sync/end_of_support.rs b/zebrad/src/components/sync/end_of_support.rs
-index a76ede3..39dc508 100644
+index 78fb21966..e3070327f 100644
 --- a/zebrad/src/components/sync/end_of_support.rs
 +++ b/zebrad/src/components/sync/end_of_support.rs
 @@ -3,7 +3,7 @@
@@ -64,5 +64,5 @@ index a76ede3..39dc508 100644
 +    Ok(())
  }
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 

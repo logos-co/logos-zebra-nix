@@ -1,4 +1,4 @@
-From 191ac24fb96cb56df5c52fe5c897844bcbae3115 Mon Sep 17 00:00:00 2001
+From e866d875d4d23ded3f9cf20a133308dabdc78712 Mon Sep 17 00:00:00 2001
 From: Dario Gabriel Lipicar <dario@status.im>
 Date: Thu, 8 Oct 2026 00:20:39 -0300
 Subject: [PATCH 4/4] lightwalletd: hand the gRPC service to an embedder
@@ -21,7 +21,7 @@ itself behaves as before.
  2 files changed, 77 insertions(+), 10 deletions(-)
 
 diff --git a/zebra-rpc/src/lightwalletd/server.rs b/zebra-rpc/src/lightwalletd/server.rs
-index ea038f6..6ef08b9 100644
+index ea038f6d2..6ef08b9d4 100644
 --- a/zebra-rpc/src/lightwalletd/server.rs
 +++ b/zebra-rpc/src/lightwalletd/server.rs
 @@ -1,10 +1,14 @@
@@ -112,7 +112,7 @@ index ea038f6..6ef08b9 100644
              .await?;
  
 diff --git a/zebrad/src/commands/start.rs b/zebrad/src/commands/start.rs
-index 23d363a..07b976f 100644
+index f563c8409..4e52398a8 100644
 --- a/zebrad/src/commands/start.rs
 +++ b/zebrad/src/commands/start.rs
 @@ -89,12 +89,21 @@ use tokio::{
@@ -196,5 +196,5 @@ index 23d363a..07b976f 100644
          info!("spawning block gossip task");
          let block_gossip_task_handle = tokio::spawn(
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 
