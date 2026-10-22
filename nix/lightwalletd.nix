@@ -3,7 +3,7 @@
 { pkgs, goos ? null }:
 
 let
-  version = "0.5.4";
+  version = "0.5.5";
   # As upstream's Makefile stamps a release; GetLightdInfo reports it.
   stamp = "-X github.com/zcash/lightwalletd/common.Version=v${version}";
 in
@@ -14,9 +14,9 @@ pkgs.buildGo125Module ({
     owner = "zcash";
     repo = "lightwalletd";
     rev = "v${version}";
-    hash = "sha256-vlfC/2yuHx9wiOczyUfBmuI5KdLyonACVlwtUowSuDA=";
+    hash = "sha256-oEfilypspzPLo3Cr5lC2tXxt34Mmmr9NyHNar2292Zs=";
   };
-  vendorHash = "sha256-DT1R6C6AoXR0FpyVTzw9VcF0DaPbvqvkrVsYg+6bP2g=";
+  vendorHash = "sha256-LyWbitsjw6YXxGnxd53SCkD6AL5p8YY6hLQJxgVIIRw=";
   subPackages = [ "." ];
   ldflags = [ stamp ];
   doCheck = false;

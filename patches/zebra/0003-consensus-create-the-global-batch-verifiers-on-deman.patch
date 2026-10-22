@@ -1,4 +1,4 @@
-From 8df30e39480b9e99ac6cb6f9979e75e0c2b3970e Mon Sep 17 00:00:00 2001
+From f7d1eb9c4b283ec7a57f9917b8f86f236ce220ad Mon Sep 17 00:00:00 2001
 From: Dario Gabriel Lipicar <dario@status.im>
 Date: Wed, 7 Oct 2026 17:59:05 -0300
 Subject: [PATCH 3/4] consensus: create the global batch verifiers on demand
@@ -12,7 +12,7 @@ No verification logic changes.
  2 files changed, 17 insertions(+), 1 deletion(-)
 
 diff --git a/zebra-consensus/src/lib.rs b/zebra-consensus/src/lib.rs
-index 1d1efd8..3658631 100644
+index 1d1efd8cb..365863176 100644
 --- a/zebra-consensus/src/lib.rs
 +++ b/zebra-consensus/src/lib.rs
 @@ -57,7 +57,8 @@ pub use checkpoint::{VerifyCheckpointError, MAX_CHECKPOINT_BYTE_COUNT, MAX_CHECK
@@ -26,7 +26,7 @@ index 1d1efd8..3658631 100644
  pub use router::RouterError;
  
 diff --git a/zebra-consensus/src/primitives.rs b/zebra-consensus/src/primitives.rs
-index 7e48ea8..ec3f221 100644
+index 7e48ea801..ec3f22154 100644
 --- a/zebra-consensus/src/primitives.rs
 +++ b/zebra-consensus/src/primitives.rs
 @@ -12,6 +12,21 @@ pub mod redjubjub;
@@ -52,5 +52,5 @@ index 7e48ea8..ec3f221 100644
  const MAX_BATCH_SIZE: usize = 64;
  
 -- 
-2.50.1 (Apple Git-155)
+2.54.0 (Apple Git-157)
 
