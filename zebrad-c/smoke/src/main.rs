@@ -568,6 +568,32 @@ fn stop_on_signal() {
 #[cfg(windows)]
 fn stop_on_signal() {}
 
+/// As zebrad_module's static destructor does: calls in once more at exit, after macOS and
+/// glibc have destroyed this thread's thread-locals.
+#[cfg(unix)]
+fn call_again_at_exit(lib: &Lib) {
+    struct Calls {
+        stop: unsafe extern "C" fn(),
+        last_error: unsafe extern "C" fn() -> *const c_char,
+        free: unsafe extern "C" fn(*const c_char),
+    }
+    static CALLS: std::sync::OnceLock<Calls> = std::sync::OnceLock::new();
+    extern "C" fn at_exit() {
+        if let Some(c) = CALLS.get() {
+            unsafe {
+                (c.stop)();
+                (c.free)((c.last_error)());
+            }
+        }
+    }
+    let _ = CALLS.set(Calls { stop: lib.stop, last_error: lib.last_error, free: lib.free });
+    unsafe { libc::atexit(at_exit) };
+}
+
+// The libc crate declares no atexit for Windows.
+#[cfg(windows)]
+fn call_again_at_exit(_: &Lib) {}
+
 fn serve(lib: &Lib, config: &Path) -> Result<(), String> {
     let toml = std::fs::read_to_string(config).map_err(|e| format!("{}: {e}", config.display()))?;
     let options = serde_json::json!({
@@ -612,6 +638,7 @@ fn main() -> ExitCode {
             }
         };
     }
+    call_again_at_exit(&lib);
     let dir = std::env::temp_dir().join(format!("zebrad-c-smoke-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("temp dir");
     let result = run(&lib, &dir);

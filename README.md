@@ -49,7 +49,7 @@ from rust-overlay.
 | Function | |
 |---|---|
 | `ZEBRAD_start(options_json)` | Starts the node on its own thread. `{"config": "<zebrad TOML>", "logFile", "logFilter", "exposeRpc"}`. Refuses `debug_stop_at_height`, zcashd compatibility, block notify commands, and TCP servers without `exposeRpc`. |
-| `ZEBRAD_stop()` | Stops and joins the node. Idempotent; any thread. |
+| `ZEBRAD_stop()` | Stops and joins the node. Idempotent; any thread, and from a static destructor at exit. |
 | `ZEBRAD_state()` | stopped, starting, running (gRPC answers), stopping, failed. |
 | `ZEBRAD_status_json()` | `state`, `network`, `uptimeSecs`, `cacheDir`, `height`, `finalizedHeight`, `estimatedHeight`, `peers`, `rpcExposed`, `lastStopMs`, `version`, `lastError`. -1 until known. |
 | `ZEBRAD_grpc(path, body, len, &out, &out_len)` | One lightwalletd call, in memory. Returns its grpc-status. |
@@ -101,6 +101,9 @@ UNAVAILABLE. Then it checks that TCP servers are refused without `exposeRpc`. Wi
 mines two blocks over JSON-RPC and streams them back in memory with `GetBlockRange` (1..=3
 gives both blocks, then NOT_FOUND), calls `GetLightdInfo` over TCP, and checks that both
 ports close on stop. Zebra names Regtest's chain `test`, as its `getblockchaininfo` does.
+On macOS and Linux an exit handler then calls `ZEBRAD_stop` and `ZEBRAD_last_error` once
+more, as zebrad_module's static destructor does, after the main thread's thread-locals are
+destroyed.
 
 To work on `zebrad-c` with cargo, link the patched tree where its manifest expects it:
 

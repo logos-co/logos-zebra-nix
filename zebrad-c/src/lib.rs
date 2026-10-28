@@ -49,7 +49,8 @@ static LIFECYCLE: Mutex<()> = Mutex::new(());
 static GLOBALS: OnceLock<Globals> = OnceLock::new();
 
 thread_local! {
-    /// Why this thread's last start or gRPC call failed, until its next call in.
+    /// Why this thread's last start or gRPC call failed, until its next call in. Reached with
+    /// `try_with`: a C++ static destructor calls in at exit, after the slot is destroyed.
     static CALL_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
@@ -135,11 +136,11 @@ fn set_error(msg: impl Into<String>) {
 }
 
 fn set_call_error(msg: String) {
-    CALL_ERROR.with(|e| *e.borrow_mut() = Some(msg));
+    let _ = CALL_ERROR.try_with(|e| *e.borrow_mut() = Some(msg));
 }
 
 fn clear_call_error() {
-    CALL_ERROR.with(|e| e.borrow_mut().take());
+    let _ = CALL_ERROR.try_with(|e| e.borrow_mut().take());
 }
 
 fn panic_message(p: &(dyn std::any::Any + Send)) -> String {
@@ -468,7 +469,7 @@ pub extern "C" fn ZEBRAD_status_json() -> *const c_char {
 
 #[no_mangle]
 pub extern "C" fn ZEBRAD_last_error() -> *const c_char {
-    let call = CALL_ERROR.with(|e| e.borrow().clone());
+    let call = CALL_ERROR.try_with(|e| e.borrow().clone()).ok().flatten();
     to_c(call.unwrap_or_else(|| lock(&LAST_ERROR).clone()))
 }
 
