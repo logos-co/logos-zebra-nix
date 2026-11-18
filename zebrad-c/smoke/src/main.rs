@@ -632,8 +632,10 @@ fn run(lib: &Lib, dir: &Path) -> Result<(), String> {
 
     // 3. Mining and rewriting the chain stay on regtest, whatever the caller asks for.
     let testnet = dir.join("testnet");
+    // No seed peers: a sandboxed build has no DNS, and the node would wait for them.
     let config = format!(
-        "[network]\nnetwork = \"Testnet\"\nlisten_addr = \"127.0.0.1:0\"\ncache_dir = false\n\n\
+        "[network]\nnetwork = \"Testnet\"\nlisten_addr = \"127.0.0.1:0\"\ncache_dir = false\n\
+         initial_testnet_peers = []\n\n\
          [state]\ncache_dir = {}\n",
         serde_json::to_string(&testnet.display().to_string()).unwrap()
     );
