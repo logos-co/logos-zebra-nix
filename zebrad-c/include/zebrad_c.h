@@ -50,6 +50,14 @@ int ZEBRAD_grpc(const char* path, const uint8_t* body, size_t body_len,
 // Releases ZEBRAD_grpc's `*out`, given its `*out_len`. Null is fine.
 void ZEBRAD_free_bytes(uint8_t* p, size_t len);
 
+// Calls the node's JSON-RPC in memory; no socket or cookie is involved. `params_json` is a JSON
+// array or object, or null or "" for none. Blocks until the reply, always
+// {"result":...,"error":null} or {"result":null,"error":{"code":n,"message":s}}: -9 while the
+// node is not running, -28 while it starts, -32601 for a method it may not call, -32600 for
+// params of another shape, -32603 at 120 s. Mining and chain-rewriting methods answer on regtest
+// only; `stop` and `rpc.discover` never do. Any thread, concurrently.
+const char* ZEBRAD_rpc(const char* method, const char* params_json);
+
 #ifdef __cplusplus
 }
 #endif

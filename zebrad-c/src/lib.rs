@@ -24,12 +24,16 @@ use tokio::sync::oneshot;
 use tonic::Code;
 use zebra_rpc::lightwalletd::BlockId;
 use zebrad::{
-    commands::{start::LightwalletdServiceSink, StartCmd},
+    commands::{
+        start::{JsonRpcServiceSink, LightwalletdServiceSink},
+        StartCmd,
+    },
     config::ZebradConfig,
 };
 
 mod gauges;
 mod grpc;
+mod rpc;
 
 pub const STOPPED: i32 = 0;
 pub const STARTING: i32 = 1;
@@ -282,6 +286,12 @@ fn start(options_json: *const c_char) -> Result<(), String> {
     Ok(())
 }
 
+/// Refuses new in-memory calls.
+fn close_endpoints() {
+    grpc::close();
+    rpc::close();
+}
+
 fn node_main(config: ZebradConfig, stop_rx: oneshot::Receiver<()>) {
     let outcome = catch_unwind(AssertUnwindSafe(move || -> Result<(), String> {
         let rt = tokio::runtime::Builder::new_multi_thread()
@@ -290,6 +300,10 @@ fn node_main(config: ZebradConfig, stop_rx: oneshot::Receiver<()>) {
             .build()
             .map_err(|e| format!("node runtime: {e}"))?;
         let handle = rt.handle().clone();
+        let rpc_handle = handle.clone();
+        let regtest = config.network.network.is_regtest();
+        let json_rpc_sink: JsonRpcServiceSink =
+            Box::new(move |service| rpc::open(service, rpc_handle, regtest));
         // The node is up once it hands over its gRPC service; a racing stop wins.
         let sink: LightwalletdServiceSink = Box::new(move |service| {
             if STATE
@@ -305,13 +319,13 @@ fn node_main(config: ZebradConfig, stop_rx: oneshot::Receiver<()>) {
             tokio::select! {
                 biased;
                 _ = stop_rx => Ok(true),
-                result = StartCmd::run_node(config, false, Some(sink)) => {
+                result = StartCmd::run_node(config, false, Some(sink), Some(json_rpc_sink)) => {
                     result.map(|()| false).map_err(|e| format!("{e:#}"))
                 }
             }
         });
         // New calls are refused; calls in flight end with the runtime.
-        grpc::close();
+        close_endpoints();
         rt.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
         match stopped {
             Ok(true) => Ok(()),
@@ -319,7 +333,7 @@ fn node_main(config: ZebradConfig, stop_rx: oneshot::Receiver<()>) {
             Err(e) => Err(e),
         }
     }));
-    grpc::close();
+    close_endpoints();
     let state = match outcome {
         Ok(Ok(())) => STOPPED,
         Ok(Err(e)) => {
@@ -343,7 +357,7 @@ fn stop() {
     let t0 = Instant::now();
     let _ = STATE.compare_exchange(RUNNING, STOPPING, Ordering::SeqCst, Ordering::SeqCst);
     let _ = STATE.compare_exchange(STARTING, STOPPING, Ordering::SeqCst, Ordering::SeqCst);
-    grpc::close();
+    close_endpoints();
     // As zebrad's own signal handler does, so tasks exit quietly instead of panicking.
     zebra_chain::shutdown::set_shutting_down();
     if let Some(tx) = node.stop_tx.take() {
@@ -546,6 +560,36 @@ pub extern "C" fn ZEBRAD_grpc(
         set_call_error(reply.message);
     }
     reply.code
+}
+
+fn rpc_call(method: *const c_char, params_json: *const c_char) -> String {
+    const INVALID_REQUEST: i32 = -32600;
+    if method.is_null() {
+        return rpc::refusal(INVALID_REQUEST, "method is null");
+    }
+    let Ok(method) = unsafe { CStr::from_ptr(method) }.to_str() else {
+        return rpc::refusal(INVALID_REQUEST, "method is not UTF-8");
+    };
+    let params = if params_json.is_null() {
+        None
+    } else {
+        match unsafe { CStr::from_ptr(params_json) }.to_str() {
+            Ok(params) => Some(params),
+            Err(_) => return rpc::refusal(INVALID_REQUEST, "params are not UTF-8"),
+        }
+    };
+    rpc::call(method, params, STATE.load(Ordering::SeqCst) == STARTING)
+}
+
+/// Calls the node's JSON-RPC in memory and returns its reply; see the header.
+#[no_mangle]
+pub extern "C" fn ZEBRAD_rpc(method: *const c_char, params_json: *const c_char) -> *const c_char {
+    clear_call_error();
+    to_c(
+        catch_unwind(AssertUnwindSafe(|| rpc_call(method, params_json))).unwrap_or_else(|p| {
+            rpc::refusal(-32603, &format!("call panicked: {}", panic_message(&*p)))
+        }),
+    )
 }
 
 /// Releases the bytes `ZEBRAD_grpc` returned.

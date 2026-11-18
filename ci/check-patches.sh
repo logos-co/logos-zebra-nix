@@ -19,6 +19,7 @@ allowed() {
     0002-*) echo "zebrad/src/components/sync/end_of_support.rs" ;;
     0003-*) echo "zebra-consensus/src/lib.rs zebra-consensus/src/primitives.rs" ;;
     0004-*) echo "zebra-rpc/src/lightwalletd/server.rs zebrad/src/commands/start.rs" ;;
+    0005-*) echo "zebra-rpc/src/methods.rs zebra-rpc/src/server.rs zebrad/src/commands/start.rs" ;;
   esac
 }
 

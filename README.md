@@ -32,12 +32,13 @@ from rust-overlay.
 | 0002 | End of support returns an error | The halt stops the node, not the host process. |
 | 0003 | `zebra_consensus::init_batch_verifiers()` | Verifiers on a runtime that outlives each node, so the node restarts in-process. |
 | 0004 | `lightwalletd::server::service()`, and a `run_node` sink for it | The lightwalletd gRPC service, in memory and without a port. Zebra's own docs warn against its TCP port on end users' machines. |
+| 0005 | `RpcServer::in_memory_service()`, a `run_node` sink for it, and `stop` refused when embedded | JSON-RPC in memory, with Zebra's own middleware. On regtest the `stop` RPC raises SIGINT in the whole process, which here is the host application. |
 
 `checks.<system>.patches` runs `ci/check-patches.sh`, which fails when:
 
 - a patch touches a file outside its allowlist: `zebrad/src/commands/start.rs`, the
-  end-of-support file, `zebra-rpc/src/lightwalletd/server.rs`, and for 0003 only,
-  `zebra-consensus/src/{lib,primitives}.rs`. Nothing in zebra-chain, zebra-state,
+  end-of-support file, `zebra-rpc/src/lightwalletd/server.rs`, `zebra-rpc/src/server.rs`,
+  `zebra-rpc/src/methods.rs`, and for 0003 only, `zebra-consensus/src/{lib,primitives}.rs`. Nothing in zebra-chain, zebra-state,
   zebra-network, zebra-script or the consensus rules changes;
 - `zebrad-c/Cargo.lock` disagrees with upstream's `Cargo.lock` on the version or checksum
   of any package both contain.
@@ -54,6 +55,7 @@ from rust-overlay.
 | `ZEBRAD_status_json()` | `state`, `network`, `uptimeSecs`, `cacheDir`, `height`, `finalizedHeight`, `estimatedHeight`, `peers`, `rpcExposed`, `lastStopMs`, `version`, `lastError`. -1 until known. |
 | `ZEBRAD_grpc(path, body, len, &out, &out_len)` | One lightwalletd call, in memory. Returns its grpc-status. |
 | `ZEBRAD_free_bytes(out, out_len)` | Frees `ZEBRAD_grpc`'s output. |
+| `ZEBRAD_rpc(method, params_json)` | One JSON-RPC call, in memory. Returns its reply as JSON. |
 | `ZEBRAD_last_error()`, `ZEBRAD_free(s)`, `ZEBRAD_version()` | |
 
 `ZEBRAD_grpc` takes the full gRPC path (`/cash.z.wallet.sdk.rpc.CompactTxStreamer/GetBlockRange`)
@@ -65,16 +67,24 @@ while the node is not running, DEADLINE_EXCEEDED (4) at 120 s, RESOURCE_EXHAUSTE
 poll `GetMempoolTx` instead. It can be called from any thread, concurrently. Its error
 message is per thread: `ZEBRAD_last_error()` on the calling thread, right after the call.
 
-The library exports exactly these nine functions (`zebrad_c.exp`, `zebrad_c.map`). rustc
+`ZEBRAD_rpc` takes a method and its params as a JSON array or object, or null or `""` for none,
+with no port and no cookie. It answers `{"result":…,"error":null}` or
+`{"result":null,"error":{"code":…,"message":…}}`: -9 while the node is not running, -28 while it
+starts, -32601 for a method it may not call, -32600 for params of another shape, -32603 at 120 s.
+`zebrad-c/src/rpc.rs` lists the 32 methods that answer on every network and the 7 that mine,
+rewrite the chain or change peers, which answer on regtest only, judged by the chain the node
+runs. Anything else is refused, including `stop` and any method a later Zebra adds.
+
+The library exports exactly these ten functions (`zebrad_c.exp`, `zebrad_c.map`). rustc
 exports every `#[no_mangle]` symbol in the crate graph, including four from secp256k1-sys,
 so the final link swaps rustc's export list for ours, and the build fails if anything else
 is exported (`ci/check-exports.sh`).
 
 ## Security: no port by default
 
-The wallet reaches the node over Logos IPC: the zebrad module passes the gRPC bytes to
-`ZEBRAD_grpc` and returns the response. No RPC port is open, so only the module's own
-process can query the node or submit transactions through it.
+Other modules reach the node over Logos IPC: the zebrad module passes their calls to
+`ZEBRAD_grpc` and `ZEBRAD_rpc` and returns the response. No RPC port is open, so only the
+module's own process can query the node or submit transactions through it.
 
 Zebra's TCP servers (`rpc.listen_addr`, `rpc.lightwalletd_listen_addr`,
 `rpc.indexer_listen_addr`, `health.listen_addr`) are refused unless the options set
@@ -96,11 +106,14 @@ nix run .#zebrad-c-smoke -- result/lib/libzebrad_c.dylib
 The smoke test loads the library with `dlopen` (`LoadLibrary` on Windows) and starts a
 regtest node in a temporary directory. In memory, with nothing listening, it calls `GetLatestBlock` (Regtest's genesis),
 `GetLightdInfo` and `GetBlock`, checks that `GetMempoolStream` is refused, and makes 200
-calls from 8 threads at once. It stops the node and checks that a call now answers
-UNAVAILABLE. Then it checks that TCP servers are refused without `exposeRpc`. With it, it
+calls from 8 threads at once. It calls JSON-RPC in memory, by position and by name, checks the
+codes for bad params and refused methods, and makes 200 more calls at once. It stops the node
+and checks that a call now answers UNAVAILABLE. Then it checks that TCP servers are refused without `exposeRpc`. With it, it
 mines two blocks over JSON-RPC and streams them back in memory with `GetBlockRange` (1..=3
-gives both blocks, then NOT_FOUND), calls `GetLightdInfo` over TCP, and checks that both
-ports close on stop. Zebra names Regtest's chain `test`, as its `getblockchaininfo` does.
+gives both blocks, then NOT_FOUND), calls `GetLightdInfo` over TCP, mines a block in memory,
+checks that `stop` over TCP is refused and leaves the node running, and checks that both
+ports close on stop. On a testnet node it checks that mining and chain-rewriting methods are
+refused. Zebra names Regtest's chain `test`, as its `getblockchaininfo` does.
 On macOS and Linux an exit handler then calls `ZEBRAD_stop` and `ZEBRAD_last_error` once
 more, as zebrad_module's static destructor does, after the main thread's thread-locals are
 destroyed.
@@ -153,11 +166,11 @@ zebrad-c-smoke.exe zebrad_c.dll                      # on Windows, in that bin/
 
 ## Verified
 
-`nix build` and both checks on `aarch64-darwin` (an M1 Max) and `x86_64-linux`: nine exports
-each, the smoke test passing, and each stop under 10 ms on regtest. CI runs the same build and
+`nix build` and the checks on `aarch64-darwin` (an M1 Max): ten exports, the smoke test
+passing, and each stop under 10 ms on regtest. CI runs the same build and
 checks on `x86_64-linux`, `aarch64-linux` and `aarch64-darwin`. `x86_64-darwin` evaluates, but
 was not built.
 
-`x86_64-windows`, built on `x86_64-linux`: nine exports, and on Windows 11 the smoke test
-passing in 8.6 s with each stop under 5 ms. `zebrad_module` on the same machine ran the
+`x86_64-windows`, built on `x86_64-linux` before `ZEBRAD_rpc` was added: nine exports, and on
+Windows 11 the smoke test passing in 8.6 s with each stop under 5 ms. `zebrad_module` on the same machine ran the
 wallet's regtest flow on it over Logos IPC: sync, shielding, a send, a stop and restart.

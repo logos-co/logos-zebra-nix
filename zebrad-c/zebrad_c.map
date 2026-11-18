@@ -9,6 +9,7 @@
     ZEBRAD_version;
     ZEBRAD_grpc;
     ZEBRAD_free_bytes;
+    ZEBRAD_rpc;
   local:
     *;
 };
