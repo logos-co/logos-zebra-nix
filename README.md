@@ -5,7 +5,7 @@ Zebra, the Zcash node, patched to run in-process and built by Nix as a C library
 
 ```
 packages.<system>.default         # libzebrad_c: lib/libzebrad_c.{dylib,so}, include/zebrad_c.h
-packages.<system>.zebra-src       # Zebra v7.0.0 (by tag, fixed hash) + patches/zebra
+packages.<system>.zebra-src       # Zebra v7.1.0 (by tag, fixed hash) + patches/zebra
 packages.<system>.zebrad-c-smoke  # the smoke test binary
 packages.<system>.regtest-zebrad  # bin/zebrad: `zebrad -c <toml> start` on libzebrad_c, for test chains
 packages.<system>.lightwalletd    # lightwalletd v0.5.5, for test chains

@@ -3,13 +3,13 @@
 { pkgs }:
 
 let
-  version = "7.0.0";
+  version = "7.1.0";
 
   upstream = pkgs.fetchFromGitHub {
     owner = "ZcashFoundation";
     repo = "zebra";
     rev = "v${version}";
-    hash = "sha256-por/9oEN/VLYa6vW7cqNRzU4yDP97EtAtWwZqZKIAMs=";
+    hash = "sha256-9AxnarAua4gmmnytDAm1mBE3Yl3AZHtWFK9WLlU29DI=";
   };
 
   patchDir = ../patches/zebra;
