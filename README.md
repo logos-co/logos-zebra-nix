@@ -154,8 +154,9 @@ zebrad-c-smoke.exe zebrad_c.dll                      # on Windows, in that bin/
 ## Verified
 
 `nix build` and both checks on `aarch64-darwin` (an M1 Max) and `x86_64-linux`: nine exports
-each, the smoke test passing, and each stop under 10 ms on regtest. `x86_64-darwin` and
-`aarch64-linux` evaluate, but were not built.
+each, the smoke test passing, and each stop under 10 ms on regtest. CI runs the same build and
+checks on `x86_64-linux`, `aarch64-linux` and `aarch64-darwin`. `x86_64-darwin` evaluates, but
+was not built.
 
 `x86_64-windows`, built on `x86_64-linux`: nine exports, and on Windows 11 the smoke test
 passing in 8.6 s with each stop under 5 ms. `zebrad_module` on the same machine ran the
