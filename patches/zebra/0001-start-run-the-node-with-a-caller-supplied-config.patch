@@ -1,4 +1,4 @@
-From 789aeca2f8bfcf8c3212d8091f20bcee6816e45a Mon Sep 17 00:00:00 2001
+From f67aa9894a4c7b572ab67d43e0a6486ad10a536c Mon Sep 17 00:00:00 2001
 From: Dario Gabriel Lipicar <dario@status.im>
 Date: Wed, 7 Oct 2026 17:58:38 -0300
 Subject: [PATCH 1/4] start: run the node with a caller-supplied config
@@ -10,10 +10,10 @@ so an embedder can run the node without booting the Abscissa launcher.
  1 file changed, 10 insertions(+), 5 deletions(-)
 
 diff --git a/zebrad/src/commands/start.rs b/zebrad/src/commands/start.rs
-index 61a7e88ab..f563c8409 100644
+index e9aaaf6fb..b93fb4bdc 100644
 --- a/zebrad/src/commands/start.rs
 +++ b/zebrad/src/commands/start.rs
-@@ -260,9 +260,16 @@ impl StartCmd {
+@@ -263,9 +263,16 @@ impl StartCmd {
      }
  
      async fn start(&self) -> Result<(), Report> {
@@ -31,7 +31,7 @@ index 61a7e88ab..f563c8409 100644
          let is_regtest = config.network.network.is_regtest();
  
          let config = if is_regtest {
-@@ -311,7 +318,6 @@ impl StartCmd {
+@@ -314,7 +321,6 @@ impl StartCmd {
              // Preflight does blocking filesystem and /proc reads, and can hash
              // the cached zcashd binary, so keep it off the async runtime.
              let preflight_config = config.clone();
@@ -39,7 +39,7 @@ index 61a7e88ab..f563c8409 100644
              tokio::task::spawn_blocking(move || {
                  zcashd_compat::run_preflight(&preflight_config, unsafe_low_specs)
              })
-@@ -360,7 +366,7 @@ impl StartCmd {
+@@ -363,7 +369,7 @@ impl StartCmd {
          read_only_state_service.log_db_metrics();
  
          let state = ServiceBuilder::new()
@@ -48,7 +48,7 @@ index 61a7e88ab..f563c8409 100644
              .service(state_service);
  
          info!("initializing network");
-@@ -946,8 +952,7 @@ impl StartCmd {
+@@ -961,8 +967,7 @@ impl StartCmd {
  
      /// Returns the bound for the state service buffer,
      /// based on the configurations of the services that use the state concurrently.

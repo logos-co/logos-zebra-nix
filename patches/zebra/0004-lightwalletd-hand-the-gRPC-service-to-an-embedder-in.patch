@@ -1,4 +1,4 @@
-From e866d875d4d23ded3f9cf20a133308dabdc78712 Mon Sep 17 00:00:00 2001
+From 61ad72cf1ad98d6a8e143a284567cee2a0d91c07 Mon Sep 17 00:00:00 2001
 From: Dario Gabriel Lipicar <dario@status.im>
 Date: Thu, 8 Oct 2026 00:20:39 -0300
 Subject: [PATCH 4/4] lightwalletd: hand the gRPC service to an embedder
@@ -112,7 +112,7 @@ index ea038f6d2..6ef08b9d4 100644
              .await?;
  
 diff --git a/zebrad/src/commands/start.rs b/zebrad/src/commands/start.rs
-index f563c8409..4e52398a8 100644
+index b93fb4bdc..7465e661a 100644
 --- a/zebrad/src/commands/start.rs
 +++ b/zebrad/src/commands/start.rs
 @@ -89,12 +89,21 @@ use tokio::{
@@ -125,7 +125,7 @@ index f563c8409..4e52398a8 100644
 +    util::{BoxCloneService, BoxService},
 +    Layer, ServiceExt,
 +};
- use tracing_futures::Instrument;
+ use tracing::Instrument;
  
  use zebra_chain::block::genesis::regtest_genesis_block;
  use zebra_consensus::router::BackgroundTaskHandles;
@@ -139,7 +139,7 @@ index f563c8409..4e52398a8 100644
  
  use crate::{
      application::{build_version, user_agent, LAST_WARN_ERROR_LOG_SENDER},
-@@ -130,6 +139,10 @@ pub struct StartCmd {
+@@ -133,6 +142,10 @@ pub struct StartCmd {
      unsafe_low_specs: bool,
  }
  
@@ -150,7 +150,7 @@ index f563c8409..4e52398a8 100644
  /// Warns if Linux TCP slow-start-after-idle is enabled, which significantly
  /// reduces single-peer throughput for block propagation.
  ///
-@@ -260,14 +273,21 @@ impl StartCmd {
+@@ -263,14 +276,21 @@ impl StartCmd {
      }
  
      async fn start(&self) -> Result<(), Report> {
@@ -174,7 +174,7 @@ index f563c8409..4e52398a8 100644
          check_tcp_slow_start_after_idle();
  
          let is_regtest = config.network.network.is_regtest();
-@@ -601,6 +621,20 @@ impl StartCmd {
+@@ -604,6 +624,20 @@ impl StartCmd {
              }
          };
  
