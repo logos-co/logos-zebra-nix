@@ -55,6 +55,7 @@ struct Lib {
     version: unsafe extern "C" fn() -> *const c_char,
     grpc: unsafe extern "C" fn(*const c_char, *const u8, usize, *mut *mut u8, *mut usize) -> c_int,
     free_bytes: unsafe extern "C" fn(*mut u8, usize),
+    rpc: unsafe extern "C" fn(*const c_char, *const c_char) -> *const c_char,
 }
 
 #[cfg(unix)]
@@ -131,6 +132,7 @@ impl Lib {
                 version: symbol(h, "ZEBRAD_version")?,
                 grpc: symbol(h, "ZEBRAD_grpc")?,
                 free_bytes: symbol(h, "ZEBRAD_free_bytes")?,
+                rpc: symbol(h, "ZEBRAD_rpc")?,
             })
         }
     }
@@ -204,6 +206,31 @@ impl Lib {
             self.last_error()
         };
         (code, bytes, message)
+    }
+
+    /// One in-memory JSON-RPC call, as `{"result":...,"error":...}`.
+    fn rpc(&self, method: &str, params: &str) -> serde_json::Value {
+        let method = CString::new(method).unwrap();
+        let params = CString::new(params).unwrap();
+        let reply = self.take(unsafe { (self.rpc)(method.as_ptr(), params.as_ptr()) });
+        serde_json::from_str(&reply).expect("the reply is JSON")
+    }
+
+    /// A call that must succeed; its `result`.
+    fn rpc_ok(&self, method: &str, params: &str) -> Result<serde_json::Value, String> {
+        let reply = self.rpc(method, params);
+        ensure(reply["error"].is_null(), format!("{method}: {reply}"))?;
+        Ok(reply["result"].clone())
+    }
+
+    /// A call that must fail with `code`; its message.
+    fn rpc_refused(&self, method: &str, params: &str, code: i64) -> Result<String, String> {
+        let reply = self.rpc(method, params);
+        ensure(
+            reply["result"].is_null() && reply["error"]["code"] == code,
+            format!("{method} {params}: {reply}, expected code {code}"),
+        )?;
+        Ok(reply["error"]["message"].as_str().unwrap_or_default().to_owned())
     }
 
     fn unary<T: Message + Default>(
@@ -462,7 +489,47 @@ fn run(lib: &Lib, dir: &Path) -> Result<(), String> {
     )?;
     println!("in memory: 8 threads x 25 concurrent GetLatestBlock, all OK");
 
+    // JSON-RPC in memory: the reply's shape, the codes clients rely on, and what is refused.
+    let count = lib.rpc_ok("getblockcount", "")?;
+    ensure(count == 0, format!("getblockcount {count}"))?;
+    let hash = lib.rpc_ok("getblockhash", "[0]")?;
+    ensure(hash == REGTEST_GENESIS, format!("getblockhash 0: {hash}"))?;
+    let named = lib.rpc_ok("getblockhash", r#"{"index":0}"#)?;
+    ensure(named == REGTEST_GENESIS, format!("named params: {named}"))?;
+    let chain = lib.rpc_ok("getblockchaininfo", "[]")?;
+    ensure(chain["chain"] == CHAIN_NAME, format!("getblockchaininfo: {chain}"))?;
+    let misc = lib.rpc_refused("getblockhash", r#"["x"]"#, -1)?;
+    for method in ["stop", "rpc.discover", "nosuchmethod"] {
+        lib.rpc_refused(method, "[]", -32601)?;
+    }
+    lib.rpc_refused("getblockcount", "1", -32600)?;
+    lib.rpc_refused("getblockcount", "[", -32600)?;
+    let no_miner = lib.rpc("generate", "[1]");
+    ensure(
+        !no_miner["error"].is_null() && no_miner["error"]["code"] != -32601,
+        format!("generate without a miner address: {no_miner}"),
+    )?;
+    let failures: usize = thread::scope(|s| {
+        let callers: Vec<_> = (0..8)
+            .map(|_| {
+                s.spawn(|| {
+                    (0..25)
+                        .filter(|_| lib.rpc("getblockcount", "")["error"] != serde_json::Value::Null)
+                        .count()
+                })
+            })
+            .collect();
+        callers.into_iter().map(|c| c.join().unwrap()).sum()
+    });
+    ensure(failures == 0, format!("{failures} of 200 concurrent RPC calls failed"))?;
+    println!(
+        "in memory: JSON-RPC getblockcount, getblockhash by position and by name, getblockchaininfo; \
+         bad params -> -1 ({misc}); stop, rpc.discover and an unknown method -> -32601; \
+         params of another shape -> -32600; 200 concurrent calls OK"
+    );
+
     let took = lib.stop()?;
+    lib.rpc_refused("getblockcount", "", -9)?;
     let (code, _, message) = lib.call("GetLightdInfo", &Empty {});
     ensure(
         code == UNAVAILABLE,
@@ -539,6 +606,20 @@ fn run(lib: &Lib, dir: &Path) -> Result<(), String> {
         info.chain_name, info.block_height
     );
 
+    let mined = lib.rpc_ok("generate", "[1]")?;
+    ensure(
+        mined.as_array().is_some_and(|a| a.len() == 1),
+        format!("generate in memory gave {mined}"),
+    )?;
+    let count = lib.rpc_ok("getblockcount", "")?;
+    ensure(count == 3, format!("getblockcount after mining: {count}"))?;
+    let tcp_stop = json_rpc(rpc, "stop", serde_json::json!([]));
+    ensure(
+        tcp_stop.as_ref().is_err_and(|e| e.contains("-32601")) && lib.state() == RUNNING,
+        format!("stop over TCP: {tcp_stop:?}"),
+    )?;
+    println!("exposeRpc: generate in memory mined block 3; stop over TCP -> -32601, node running");
+
     let took = lib.stop()?;
     for port in [lwd, rpc] {
         let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -548,6 +629,27 @@ fn run(lib: &Lib, dir: &Path) -> Result<(), String> {
         )?;
     }
     println!("stop: {} ms; both ports closed", took.as_millis());
+
+    // 3. Mining and rewriting the chain stay on regtest, whatever the caller asks for.
+    let testnet = dir.join("testnet");
+    // No seed peers: a sandboxed build has no DNS, and the node would wait for them.
+    let config = format!(
+        "[network]\nnetwork = \"Testnet\"\nlisten_addr = \"127.0.0.1:0\"\ncache_dir = false\n\
+         initial_testnet_peers = []\n\n\
+         [state]\ncache_dir = {}\n",
+        serde_json::to_string(&testnet.display().to_string()).unwrap()
+    );
+    lib.start(&serde_json::json!({ "config": config }).to_string())?;
+    wait_running(lib)?;
+    for method in ["generate", "invalidateblock", "addnode"] {
+        lib.rpc_refused(method, "[]", -32601)?;
+    }
+    lib.rpc_ok("getblockchaininfo", "")?;
+    let took = lib.stop()?;
+    println!(
+        "testnet: generate, invalidateblock and addnode -> -32601; getblockchaininfo answers; stop: {} ms",
+        took.as_millis()
+    );
     Ok(())
 }
 

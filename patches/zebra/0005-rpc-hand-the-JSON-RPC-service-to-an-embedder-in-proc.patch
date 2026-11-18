@@ -1,0 +1,260 @@
+From f89e73d4d9a512711fc0d9000e3a67282390869b Mon Sep 17 00:00:00 2001
+From: Dario Gabriel Lipicar <dario@status.im>
+Date: Wed, 18 Nov 2026 18:28:59 -0300
+Subject: [PATCH 5/5] rpc: hand the JSON-RPC service to an embedder in-process
+
+An application that embeds the node, and already has a transport of its
+own between its processes, needs the JSON-RPC methods rather than a port
+and a cookie.
+
+RpcServer::in_memory_service() builds the service RpcServer::start()
+serves, with the same methods, limits and RPC middleware, so error codes
+stay zcashd's. run_node() takes an optional sink that receives it, before
+the lightwalletd sink. StartCmd::start passes None, so zebrad itself
+behaves as before.
+
+With a sink, the stop RPC refuses, over TCP too: on Regtest it raises
+SIGINT in the whole process, which is the embedding application.
+---
+ zebra-rpc/src/methods.rs     | 19 +++++++++
+ zebra-rpc/src/server.rs      | 79 ++++++++++++++++++++++++++++++++++--
+ zebrad/src/commands/start.rs | 21 +++++++++-
+ 3 files changed, 113 insertions(+), 6 deletions(-)
+
+diff --git a/zebra-rpc/src/methods.rs b/zebra-rpc/src/methods.rs
+index 260b3cd..4c396b3 100644
+--- a/zebra-rpc/src/methods.rs
++++ b/zebra-rpc/src/methods.rs
+@@ -905,6 +905,9 @@ where
+     /// if end of support is enforced on `network`. Reported by the `getdeprecationinfo` RPC.
+     end_of_support_height: Option<Height>,
+ 
++    /// Whether the `stop` RPC refuses, because the process isn't Zebra's own to signal.
++    stop_disabled: bool,
++
+     /// The maximum number of results the address RPCs return before rejecting the query.
+     max_address_query_results: usize,
+ 
+@@ -1027,6 +1030,7 @@ where
+             network: network.clone(),
+             debug_force_finished_sync,
+             end_of_support_height: None,
++            stop_disabled: false,
+             max_address_query_results: MAX_ADDRESS_QUERY_RESULTS,
+             mempool: mempool.clone(),
+             state: state.clone(),
+@@ -1234,6 +1238,13 @@ where
+         self
+     }
+ 
++    /// Makes the `stop` RPC refuse. On Regtest it raises SIGINT in the whole process, which
++    /// an embedder shares with the application around the node.
++    pub fn with_stop_disabled(mut self, stop_disabled: bool) -> Self {
++        self.stop_disabled = stop_disabled;
++        self
++    }
++
+     /// Sets the maximum number of results the `getaddresstxids` and `getaddressutxos` RPCs return.
+     #[cfg(test)]
+     pub(crate) fn with_max_address_query_results(
+@@ -2660,6 +2671,14 @@ where
+     }
+ 
+     fn stop(&self) -> Result<String> {
++        if self.stop_disabled {
++            return Err(ErrorObject::borrowed(
++                ErrorCode::MethodNotFound.code(),
++                "stop is not available on a node embedded in another application",
++                None,
++            ));
++        }
++
+         #[cfg(not(target_os = "windows"))]
+         if self.network.is_regtest() {
+             match nix::sys::signal::raise(nix::sys::signal::SIGINT) {
+diff --git a/zebra-rpc/src/server.rs b/zebra-rpc/src/server.rs
+index c05687b..255d70b 100644
+--- a/zebra-rpc/src/server.rs
++++ b/zebra-rpc/src/server.rs
+@@ -10,8 +10,14 @@
+ use std::{collections::HashSet, fmt, panic, sync::Arc};
+ 
+ use cookie::Cookie;
+-use jsonrpsee::server::{middleware::rpc::RpcServiceBuilder, Server, ServerHandle};
++use http_body_util::BodyExt;
++use hyper::header;
++use jsonrpsee::server::{
++    middleware::rpc::RpcServiceBuilder, stop_channel, HttpBody, HttpRequest, HttpResponse, Server,
++    ServerHandle,
++};
+ use tokio::task::JoinHandle;
++use tower::{util::BoxCloneService, Service as _};
+ use tracing::*;
+ 
+ use zebra_chain::{
+@@ -86,6 +92,14 @@ pub const OPENED_LIGHTWALLETD_ENDPOINT_MSG: &str = "Opened lightwalletd gRPC end
+ 
+ type ServerTask = JoinHandle<Result<(), tower::BoxError>>;
+ 
++/// The largest RPC request is submitblock, which sends a full block
++/// as a hex string (2x MAX_BLOCK_BYTES) plus a small JSON-RPC wrapper.
++const MAX_REQUEST_BODY_SIZE: usize = (MAX_BLOCK_BYTES as usize) * 2 + 1024;
++
++/// The JSON-RPC service for an embedder that calls it in-process: it takes the text of a
++/// JSON-RPC request and answers with the text of the response.
++pub type InMemoryService = BoxCloneService<String, String, tower::BoxError>;
++
+ impl RpcServer {
+     /// Starts the RPC server.
+     ///
+@@ -127,9 +141,7 @@ impl RpcServer {
+             .listen_addr
+             .expect("caller should make sure listen_addr is set");
+ 
+-        // The largest RPC request is submitblock, which sends a full block
+-        // as a hex string (2x MAX_BLOCK_BYTES) plus a small JSON-RPC wrapper.
+-        let max_request_body_size = (MAX_BLOCK_BYTES as usize) * 2 + 1024;
++        let max_request_body_size = MAX_REQUEST_BODY_SIZE;
+         let http_middleware_layer = if conf.enable_cookie_auth {
+             let cookie = Cookie::default();
+             cookie::write_to_disk(&cookie, &conf.cookie_dir)
+@@ -167,6 +179,65 @@ impl RpcServer {
+         }))
+     }
+ 
++    /// Builds the service [`Self::start`] serves, for an embedder to call in-process.
++    ///
++    /// It has the same methods, limits and RPC middleware, with no listener and no cookie.
++    #[allow(clippy::too_many_arguments)]
++    pub fn in_memory_service<
++        Mempool,
++        State,
++        ReadState,
++        Tip,
++        BlockVerifierRouter,
++        SyncStatus,
++        AddressBook,
++    >(
++        rpc: RpcImpl<Mempool, State, ReadState, Tip, AddressBook, BlockVerifierRouter, SyncStatus>,
++        conf: &config::rpc::Config,
++    ) -> InMemoryService
++    where
++        Mempool: MempoolService,
++        State: StateService,
++        ReadState: ReadStateService,
++        Tip: ChainTip + Clone + Send + Sync + 'static,
++        AddressBook: AddressBookPeers + Clone + Send + Sync + 'static,
++        BlockVerifierRouter: BlockVerifierService,
++        SyncStatus: ChainSyncStatus + Clone + Send + Sync + 'static,
++    {
++        let rpc = rpc.into_rpc();
++        let registered_methods: Arc<HashSet<_>> = Arc::new(rpc.method_names().collect());
++        let traced_methods = registered_methods.clone();
++
++        let rpc_middleware = RpcServiceBuilder::new()
++            .rpc_logger(1024)
++            .layer_fn(FixRpcResponseMiddleware::new)
++            .layer_fn(move |service| RpcMetricsMiddleware::new(service, registered_methods.clone()))
++            .layer_fn(move |service| RpcTracingMiddleware::new(service, traced_methods.clone()));
++
++        let (stop_handle, server_handle) = stop_channel();
++        let service = Server::builder()
++            .http_only()
++            .set_rpc_middleware(rpc_middleware)
++            .max_request_body_size(MAX_REQUEST_BODY_SIZE as u32)
++            .max_response_body_size(conf.max_response_body_size)
++            .to_service_builder()
++            .build(rpc, stop_handle);
++
++        BoxCloneService::new(tower::service_fn(move |request: String| {
++            // The server stops when its last handle drops, so the service keeps one.
++            let _ = &server_handle;
++            let mut service = service.clone();
++            async move {
++                let request = HttpRequest::post("/")
++                    .header(header::CONTENT_TYPE, "application/json")
++                    .body(HttpBody::from(request))?;
++                let response: HttpResponse<HttpBody> = service.call(request).await?;
++                let body = response.into_body().collect().await?.to_bytes();
++                Ok(String::from_utf8(body.to_vec())?)
++            }
++        }))
++    }
++
+     /// Shut down this RPC server, blocking the current thread.
+     ///
+     /// This method can be called from within a tokio executor without panicking.
+diff --git a/zebrad/src/commands/start.rs b/zebrad/src/commands/start.rs
+index 7465e66..609aa67 100644
+--- a/zebrad/src/commands/start.rs
++++ b/zebrad/src/commands/start.rs
+@@ -101,7 +101,7 @@ use zebra_consensus::router::BackgroundTaskHandles;
+ use zebra_rpc::{
+     lightwalletd::{self, tracing::GrpcTracingLayer},
+     methods::RpcImpl,
+-    server::RpcServer,
++    server::{InMemoryService, RpcServer},
+     SubmitBlockChannel,
+ };
+ 
+@@ -146,6 +146,10 @@ pub struct StartCmd {
+ /// can serve it in-process, without a TCP listener.
+ pub type LightwalletdServiceSink = Box<dyn FnOnce(lightwalletd::server::BoxedService) + Send>;
+ 
++/// Receives the JSON-RPC service once the node has built it, so an embedder can call it
++/// in-process, without a TCP listener.
++pub type JsonRpcServiceSink = Box<dyn FnOnce(InMemoryService) + Send>;
++
+ /// Warns if Linux TCP slow-start-after-idle is enabled, which significantly
+ /// reduces single-peer throughput for block propagation.
+ ///
+@@ -276,7 +280,7 @@ impl StartCmd {
+     }
+ 
+     async fn start(&self) -> Result<(), Report> {
+-        Self::run_node(APPLICATION.config(), self.unsafe_low_specs, None).await
++        Self::run_node(APPLICATION.config(), self.unsafe_low_specs, None, None).await
+     }
+ 
+     /// Runs the node with `config`, without the Abscissa launcher.
+@@ -286,10 +290,14 @@ impl StartCmd {
+     ///
+     /// If `lightwalletd_sink` is set, it receives the lightwalletd gRPC service, whether or
+     /// not `rpc.lightwalletd_listen_addr` also serves it over TCP.
++    ///
++    /// If `json_rpc_sink` is set, it receives the JSON-RPC service first, whether or not
++    /// `rpc.listen_addr` also serves it over TCP, and the `stop` RPC refuses on both.
+     pub async fn run_node(
+         config: Arc<ZebradConfig>,
+         unsafe_low_specs: bool,
+         lightwalletd_sink: Option<LightwalletdServiceSink>,
++        json_rpc_sink: Option<JsonRpcServiceSink>,
+     ) -> Result<(), Report> {
+         check_tcp_slow_start_after_idle();
+ 
+@@ -513,6 +521,7 @@ impl StartCmd {
+         let rpc_impl = rpc_impl.with_end_of_support_height(
+             sync::end_of_support::end_of_support_height(&config.network.network),
+         );
++        let rpc_impl = rpc_impl.with_stop_disabled(json_rpc_sink.is_some());
+ 
+         // Keep a block template ready for the `getblocktemplate` RPC, if this node is configured
+         // for mining, and something can actually ask for a template. Without the RPC server and
+@@ -624,6 +633,14 @@ impl StartCmd {
+             }
+         };
+ 
++        if let Some(json_rpc_sink) = json_rpc_sink {
++            info!("providing the JSON-RPC service to the embedder");
++            json_rpc_sink(RpcServer::in_memory_service(
++                rpc_impl.clone(),
++                &config.rpc,
++            ));
++        }
++
+         if let Some(lightwalletd_sink) = lightwalletd_sink {
+             info!("providing the lightwalletd gRPC service to the embedder");
+             lightwalletd_sink(BoxCloneService::new(GrpcTracingLayer.layer(
+-- 
+2.54.0 (Apple Git-157)
+

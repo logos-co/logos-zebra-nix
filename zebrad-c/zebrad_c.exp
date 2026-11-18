@@ -7,3 +7,4 @@ _ZEBRAD_free
 _ZEBRAD_version
 _ZEBRAD_grpc
 _ZEBRAD_free_bytes
+_ZEBRAD_rpc
