@@ -8,7 +8,7 @@ packages.<system>.default         # libzebrad_c: lib/libzebrad_c.{dylib,so}, inc
 packages.<system>.zebra-src       # Zebra v7.1.0 (by tag, fixed hash) + patches/zebra
 packages.<system>.zebrad-c-smoke  # the smoke test binary
 packages.<system>.regtest-zebrad  # bin/zebrad: `zebrad -c <toml> start` on libzebrad_c, for test chains
-packages.<system>.lightwalletd    # lightwalletd v0.5.5, for test chains
+packages.<system>.lightwalletd    # lightwalletd v0.6.3, for test chains
 checks.<system>.patches           # the patch guard
 checks.<system>.smoke             # the smoke test, against the built library
 checks.<system>.regtest-fixture   # the two together: three blocks mined, served, a clean stop

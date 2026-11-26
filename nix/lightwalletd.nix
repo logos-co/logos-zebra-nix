@@ -1,22 +1,37 @@
-# lightwalletd for the regtest chain. v0.5.x speaks lightwallet-protocol v0.5.0, the oldest the
-# wallet accepts. `goos = "windows"` cross-compiles lightwalletd.exe: pure Go, no cgo.
+# lightwalletd for the regtest chain. `goos = "windows"` cross-compiles lightwalletd.exe: pure Go, no cgo.
 { pkgs, goos ? null }:
 
 let
-  version = "0.5.5";
+  version = "0.6.3";
+
+  # lightwalletd 0.6 needs Go 1.26.10+, newer than the pinned nixpkgs' 1.25.0. Go 1.27 built from
+  # source on nixpkgs' recipe, bootstrapped by that 1.25 (its own bootstrap, 1.22, is too old).
+  bootstrap = pkgs.buildPackages.go_1_25;
+  go = pkgs.buildPackages.go_1_25.overrideAttrs (old: {
+    version = "1.27.4";
+    src = pkgs.fetchurl {
+      url = "https://go.dev/dl/go1.27.4.src.tar.gz";
+      sha256 = "73cfb8571aec0c01177687db87163d46aa20e9779672772891aa17654d9a6099";
+    };
+    # go_no_vendor_checks doesn't apply past 1.25; nixpkgs uses it nowhere in tree.
+    patches = builtins.filter (p: !(pkgs.lib.hasInfix "go_no_vendor_checks" (toString p))) old.patches;
+    GOROOT_BOOTSTRAP = "${bootstrap}/share/go";
+    disallowedReferences = (old.disallowedReferences or [ ]) ++ [ bootstrap ];
+  });
+
   # As upstream's Makefile stamps a release; GetLightdInfo reports it.
   stamp = "-X github.com/zcash/lightwalletd/common.Version=v${version}";
 in
-pkgs.buildGo125Module ({
+(pkgs.buildGo125Module.override { inherit go; }) ({
   pname = "lightwalletd";
   inherit version;
   src = pkgs.fetchFromGitHub {
     owner = "zcash";
     repo = "lightwalletd";
     rev = "v${version}";
-    hash = "sha256-oEfilypspzPLo3Cr5lC2tXxt34Mmmr9NyHNar2292Zs=";
+    hash = "sha256-NA0n4bKks+4BdUCmm0/wclYYbjwSg/+B5XTHnQbB1Eo=";
   };
-  vendorHash = "sha256-LyWbitsjw6YXxGnxd53SCkD6AL5p8YY6hLQJxgVIIRw=";
+  vendorHash = "sha256-nkPT+WK0sUiAtkF0PZDo71yGHLGqOxd4qvo6DZHkIbI=";
   subPackages = [ "." ];
   ldflags = [ stamp ];
   doCheck = false;
