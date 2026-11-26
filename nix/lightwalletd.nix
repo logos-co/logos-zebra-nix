@@ -29,9 +29,9 @@ in
     owner = "zcash";
     repo = "lightwalletd";
     rev = "v${version}";
-    hash = "sha256-oEfilypspzPLo3Cr5lC2tXxt34Mmmr9NyHNar2292Zs=";
+    hash = "sha256-NA0n4bKks+4BdUCmm0/wclYYbjwSg/+B5XTHnQbB1Eo=";
   };
-  vendorHash = "sha256-LyWbitsjw6YXxGnxd53SCkD6AL5p8YY6hLQJxgVIIRw=";
+  vendorHash = "sha256-nkPT+WK0sUiAtkF0PZDo71yGHLGqOxd4qvo6DZHkIbI=";
   subPackages = [ "." ];
   ldflags = [ stamp ];
   doCheck = false;
